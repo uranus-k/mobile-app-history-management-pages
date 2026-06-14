@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Naver Map</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#1E293B}
+  #map{position:absolute;inset:0}
+  #overlay{position:absolute;inset:0;z-index:10;pointer-events:none}
+  #draw-canvas{position:absolute;inset:0;z-index:20;display:none;pointer-events:none;cursor:crosshair}
+</style>
+<!-- 네이버 지도 API v3 — ncpClientId: ql5099c2b3 (도메인 제한으로 보호됨) -->
+<script src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=ql5099c2b3"></script>
+</head>
+<body>
+<div id="map"></div>
+<div id="overlay"></div>
+<canvas id="draw-canvas"></canvas>
+
+<script>
+var ZONE_COLORS = ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#14B8A6','#F97316'];
+var map, zones = [], activeZoneId = null, drawMode = false, drawStart = null, drawBound = false;
+
+// ── 지도 초기화 ──────────────────────────────────────
+function initMap() {
+  map = new naver.maps.Map('map', {
+    center:         new naver.maps.LatLng(35.1048, 129.0355),
+    zoom:           16,
+    mapTypeId:      naver.maps.MapTypeId.HYBRID,
+    mapTypeControl: false,
+    scaleControl:   true,
+    logoControl:    true,
+    mapDataControl: false
+  });
+  postUp({ type: 'mapReady' });
+}
+
+// ── 부모(GAS)로 메시지 전송 ──────────────────────────
+function postUp(msg) {
+  try { window.parent.postMessage(msg, '*'); } catch(e) {}
+}
+
+// ── 부모(GAS)로부터 메시지 수신 ──────────────────────
+window.addEventListener('message', function(e) {
+  var d = e.data;
+  if (!d || !d.type) return;
+  switch (d.type) {
+    case 'setZones':
+      zones = d.zones || [];
+      renderZones();
+      break;
+    case 'setView':
+      if (d.lat && d.lng) {
+        map.setCenter(new naver.maps.LatLng(d.lat, d.lng));
+        map.setZoom(d.zoom || 16, false);
+      }
+      break;
+    case 'setMapType':
+      var t = { hybrid: naver.maps.MapTypeId.HYBRID, satellite: naver.maps.MapTypeId.SATELLITE, normal: naver.maps.MapTypeId.NORMAL };
+      map.setMapTypeId(t[d.mapType] || naver.maps.MapTypeId.HYBRID);
+      break;
+    case 'setDrawMode':
+      setDrawMode(d.enabled);
+      break;
+    case 'filterZone':
+      activeZoneId = d.zoneId;
+      renderZones();
+      break;
+    case 'clearFilter':
+      activeZoneId = null;
+      renderZones();
+      break;
+  }
+});
+
+// ── 구역 오버레이 렌더링 ─────────────────────────────
+function renderZones() {
+  var ol = document.getElementById('overlay');
+  ol.innerHTML = '';
+  zones.forEach(function(z, i) {
+    if (!z.boxCoords) return;
+    var c; try { c = JSON.parse(z.boxCoords); } catch(e) { return; }
+    if (c.left == null) return;
+    var isAct  = activeZoneId === z.zoneId;
+    var color  = ZONE_COLORS[i % ZONE_COLORS.length];
+    var cnt    = z.itemCount || 0;
+    var box    = document.createElement('div');
+    box.style.cssText = 'position:absolute;box-sizing:border-box;border-radius:4px;pointer-events:auto;cursor:pointer;'
+      + 'left:'   + c.left   + '%;top:'    + c.top    + '%;'
+      + 'width:'  + c.width  + '%;height:' + c.height + '%;'
+      + 'background:' + color + (isAct ? '55' : '30') + ';'
+      + 'border:'     + (isAct ? '2.5px' : '1.5px') + ' solid ' + color + ';';
+    box.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
+      + 'justify-content:center;font-size:clamp(9px,1.8vw,14px);font-weight:800;color:#fff;'
+      + 'text-shadow:0 1px 5px rgba(0,0,0,.9);text-align:center;padding:2px;line-height:1.3">'
+      + (z.zoneName || z.zoneId)
+      + (cnt ? '<div style="font-size:9px;opacity:.9;margin-top:1px">' + cnt + '건</div>' : '')
+      + '</div>';
+    box.onclick = function(e) { e.stopPropagation(); postUp({ type: 'zoneClick', zoneId: z.zoneId }); };
+    ol.appendChild(box);
+  });
+}
+
+// ── 구역 그리기 모드 ─────────────────────────────────
+function setDrawMode(on) {
+  drawMode = on;
+  var canvas = document.getElementById('draw-canvas');
+  if (on) {
+    map.setOptions({ draggable: false, scrollWheel: false, keyboardShortcuts: false,
+                     disableDoubleClickZoom: true, disableTwoFingerTapZoom: true });
+    canvas.width  = document.body.clientWidth;
+    canvas.height = document.body.clientHeight;
+    canvas.style.display       = 'block';
+    canvas.style.pointerEvents = 'auto';
+    if (!drawBound) {
+      drawBound = true;
+      canvas.addEventListener('mousedown',  onDown);
+      canvas.addEventListener('mousemove',  onMove);
+      canvas.addEventListener('mouseup',    onUp);
+      canvas.addEventListener('mouseleave', function() { drawStart = null; clearCanvas(); });
+      canvas.addEventListener('touchstart', function(e) { e.preventDefault(); var t=e.touches[0]; onDown({clientX:t.clientX,clientY:t.clientY}); }, {passive:false});
+      canvas.addEventListener('touchmove',  function(e) { e.preventDefault(); var t=e.touches[0]; onMove({clientX:t.clientX,clientY:t.clientY}); }, {passive:false});
+      canvas.addEventListener('touchend',   function(e) { e.preventDefault(); onUp({}); }, {passive:false});
+    }
+  } else {
+    map.setOptions({ draggable: true, scrollWheel: true, keyboardShortcuts: true,
+                     disableDoubleClickZoom: false, disableTwoFingerTapZoom: false });
+    canvas.style.display       = 'none';
+    canvas.style.pointerEvents = 'none';
+    clearCanvas();
+  }
+}
+
+function onDown(e) {
+  var r = document.getElementById('draw-canvas').getBoundingClientRect();
+  drawStart = { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function onMove(e) {
+  if (!drawStart) return;
+  var canvas = document.getElementById('draw-canvas');
+  var ctx = canvas.getContext('2d');
+  var r = canvas.getBoundingClientRect();
+  var cx = e.clientX - r.left, cy = e.clientY - r.top;
+  var x = Math.min(drawStart.x, cx), y = Math.min(drawStart.y, cy);
+  var w = Math.abs(cx - drawStart.x), h = Math.abs(cy - drawStart.y);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle   = 'rgba(59,130,246,0.2)';
+  ctx.strokeStyle = '#3B82F6';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+}
+
+function onUp(e) {
+  if (!drawStart) return;
+  var canvas = document.getElementById('draw-canvas');
+  var r = canvas.getBoundingClientRect();
+  var ex = e.clientX !== undefined ? e.clientX - r.left : drawStart.x;
+  var ey = e.clientY !== undefined ? e.clientY - r.top  : drawStart.y;
+  var bx = Math.min(drawStart.x, ex), by = Math.min(drawStart.y, ey);
+  var bw = Math.abs(ex - drawStart.x), bh = Math.abs(ey - drawStart.y);
+  drawStart = null;
+  if (bw < 15 || bh < 15) { clearCanvas(); return; }
+
+  var pct = {
+    left:   +(bx / canvas.width  * 100).toFixed(2),
+    top:    +(by / canvas.height * 100).toFixed(2),
+    width:  +(bw / canvas.width  * 100).toFixed(2),
+    height: +(bh / canvas.height * 100).toFixed(2)
+  };
+  var center = map.getCenter();
+  postUp({ type: 'zoneDrawn', boxCoords: JSON.stringify(pct),
+           mapLat: center.lat(), mapLng: center.lng(), mapZoom: map.getZoom() });
+  clearCanvas();
+}
+
+function clearCanvas() {
+  var c = document.getElementById('draw-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+// ── 시작 ─────────────────────────────────────────────
+if (typeof naver !== 'undefined' && naver.maps) {
+  initMap();
+} else {
+  var t = setInterval(function() {
+    if (typeof naver !== 'undefined' && naver.maps) { clearInterval(t); initMap(); }
+  }, 100);
+}
+</script>
+</body>
+</html>
