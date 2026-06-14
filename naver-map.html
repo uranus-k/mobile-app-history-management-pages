@@ -6,15 +6,18 @@
 <title>Naver Map</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body{width:100%;height:100%;overflow:hidden;background:#1E293B}
-  /* fixed: iframe 내부에서 height:100% 체인이 깨지는 문제 방지 */
-  #map{position:fixed;inset:0}
-  #overlay{position:fixed;inset:0;z-index:10;pointer-events:none}
-  #draw-canvas{position:fixed;inset:0;z-index:20;display:none;pointer-events:none;cursor:crosshair}
+  body{overflow:hidden;background:#1E293B}
+  #map{position:absolute;top:0;left:0}
+  #overlay{position:absolute;top:0;left:0;z-index:10;pointer-events:none}
+  #draw-canvas{position:absolute;top:0;left:0;z-index:20;display:none;pointer-events:none;cursor:crosshair}
+  #dbg{position:fixed;top:8px;left:8px;z-index:999;background:rgba(0,0,0,.75);color:#fff;
+       font-size:11px;font-family:monospace;padding:6px 10px;border-radius:6px;
+       pointer-events:none;max-width:280px;line-height:1.6}
 </style>
 <script src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=ql5099c2b3"></script>
 </head>
 <body>
+<div id="dbg">① API 로딩 중...</div>
 <div id="map"></div>
 <div id="overlay"></div>
 <canvas id="draw-canvas"></canvas>
@@ -23,59 +26,72 @@
 var ZONE_COLORS = ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#14B8A6','#F97316'];
 var map, zones = [], activeZoneId = null, drawMode = false, drawStart = null, drawBound = false;
 
+function setDbg(msg) {
+  var el = document.getElementById('dbg');
+  if (el) el.textContent = msg;
+}
+
+// ── 컨테이너에 명시적 픽셀 크기 부여 ─────────────────
+function sizeContainers() {
+  var w = window.innerWidth, h = window.innerHeight;
+  ['map','overlay','draw-canvas'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.width  = w + 'px';
+    el.style.height = h + 'px';
+  });
+  var c = document.getElementById('draw-canvas');
+  if (c) { c.width = w; c.height = h; }
+}
+
 // ── 지도 초기화 ──────────────────────────────────────
 function initMap() {
+  sizeContainers();
+  setDbg('② 지도 초기화 중...');
   try {
     map = new naver.maps.Map('map', {
       center:         new naver.maps.LatLng(35.1048, 129.0355),
       zoom:           16,
-      mapTypeId:      naver.maps.MapTypeId.NORMAL,
+      mapTypeId:      naver.maps.MapTypeId.HYBRID,
       mapTypeControl: false,
       scaleControl:   true,
       logoControl:    true,
       mapDataControl: false
     });
-    // iframe이 숨겨진 채로 초기화됐을 때 타일 미표시 방지 — 다중 resize 트리거
-    [100, 400, 900].forEach(function(ms) {
+    setDbg('③ 지도 객체 생성 완료 — 타일 로딩 중...');
+    // 타일 표시 확인 후 진단창 숨김
+    naver.maps.Event.once(map, 'tilesloaded', function() {
+      setDbg('✓ 타일 로드 완료');
+      setTimeout(function() {
+        var el = document.getElementById('dbg');
+        if (el) el.style.display = 'none';
+      }, 2000);
+    });
+    // resize 다중 트리거 (display:none 탭에서 초기화 대비)
+    [50, 200, 600].forEach(function(ms) {
       setTimeout(function() {
         if (map) naver.maps.Event.trigger(map, 'resize');
       }, ms);
     });
-    // 뷰포트 크기 변화 감지 → 지도 리사이즈
-    if (window.ResizeObserver) {
-      new ResizeObserver(function() {
-        if (map) naver.maps.Event.trigger(map, 'resize');
-      }).observe(document.getElementById('map'));
-    }
     window.addEventListener('resize', function() {
+      sizeContainers();
       if (map) naver.maps.Event.trigger(map, 'resize');
     });
     postUp({ type: 'mapReady' });
   } catch(e) {
-    document.getElementById('map').innerHTML =
-      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
-      + 'height:100%;color:#F87171;font-size:13px;text-align:center;gap:8px;font-family:sans-serif">'
-      + '<div style="font-size:28px">⚠️</div>'
-      + '<b>지도 초기화 오류</b>'
-      + '<span style="color:#94A3B8;font-size:11px">' + e.message + '</span>'
-      + '</div>';
+    setDbg('✗ 오류: ' + e.message);
   }
 }
 
-// ── 부모(GAS)로 메시지 전송 ──────────────────────────
 function postUp(msg) {
   try { window.parent.postMessage(msg, '*'); } catch(e) {}
 }
 
-// ── 부모(GAS)로부터 메시지 수신 ──────────────────────
 window.addEventListener('message', function(e) {
   var d = e.data;
   if (!d || !d.type) return;
   switch (d.type) {
-    case 'setZones':
-      zones = d.zones || [];
-      renderZones();
-      break;
+    case 'setZones':   zones = d.zones || []; renderZones(); break;
     case 'setView':
       if (d.lat && d.lng && map) {
         map.setCenter(new naver.maps.LatLng(d.lat, d.lng));
@@ -87,24 +103,16 @@ window.addEventListener('message', function(e) {
       var mt = { hybrid: naver.maps.MapTypeId.HYBRID, satellite: naver.maps.MapTypeId.SATELLITE, normal: naver.maps.MapTypeId.NORMAL };
       map.setMapTypeId(mt[d.mapType] || naver.maps.MapTypeId.HYBRID);
       break;
-    case 'setDrawMode':
-      setDrawMode(d.enabled);
-      break;
-    case 'filterZone':
-      activeZoneId = d.zoneId;
-      renderZones();
-      break;
-    case 'clearFilter':
-      activeZoneId = null;
-      renderZones();
-      break;
+    case 'setDrawMode': setDrawMode(d.enabled); break;
+    case 'filterZone':  activeZoneId = d.zoneId; renderZones(); break;
+    case 'clearFilter': activeZoneId = null; renderZones(); break;
     case 'resize':
+      sizeContainers();
       if (map) naver.maps.Event.trigger(map, 'resize');
       break;
   }
 });
 
-// ── 구역 오버레이 렌더링 ─────────────────────────────
 function renderZones() {
   var ol = document.getElementById('overlay');
   ol.innerHTML = '';
@@ -112,140 +120,84 @@ function renderZones() {
     if (!z.boxCoords) return;
     var c; try { c = JSON.parse(z.boxCoords); } catch(e) { return; }
     if (c.left == null) return;
-    var isAct  = activeZoneId === z.zoneId;
-    var color  = ZONE_COLORS[i % ZONE_COLORS.length];
-    var cnt    = z.itemCount || 0;
-    var box    = document.createElement('div');
+    var isAct = activeZoneId === z.zoneId;
+    var color = ZONE_COLORS[i % ZONE_COLORS.length];
+    var cnt   = z.itemCount || 0;
+    var box   = document.createElement('div');
     box.style.cssText = 'position:absolute;box-sizing:border-box;border-radius:4px;pointer-events:auto;cursor:pointer;'
-      + 'left:'   + c.left   + '%;top:'    + c.top    + '%;'
-      + 'width:'  + c.width  + '%;height:' + c.height + '%;'
+      + 'left:' + c.left + '%;top:' + c.top + '%;width:' + c.width + '%;height:' + c.height + '%;'
       + 'background:' + color + (isAct ? '55' : '30') + ';'
-      + 'border:'     + (isAct ? '2.5px' : '1.5px') + ' solid ' + color + ';';
+      + 'border:' + (isAct ? '2.5px' : '1.5px') + ' solid ' + color + ';';
     box.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
       + 'justify-content:center;font-size:clamp(9px,1.8vw,14px);font-weight:800;color:#fff;'
       + 'text-shadow:0 1px 5px rgba(0,0,0,.9);text-align:center;padding:2px;line-height:1.3">'
       + (z.zoneName || z.zoneId)
-      + (cnt ? '<div style="font-size:9px;opacity:.9;margin-top:1px">' + cnt + '건</div>' : '')
-      + '</div>';
+      + (cnt ? '<div style="font-size:9px;opacity:.9;margin-top:1px">' + cnt + '건</div>' : '') + '</div>';
     box.onclick = function(ev) { ev.stopPropagation(); postUp({ type: 'zoneClick', zoneId: z.zoneId }); };
     ol.appendChild(box);
   });
 }
 
-// ── 구역 그리기 모드 ─────────────────────────────────
 function setDrawMode(on) {
   drawMode = on;
   var canvas = document.getElementById('draw-canvas');
   if (on) {
-    if (map) map.setOptions({ draggable: false, scrollWheel: false, keyboardShortcuts: false,
-                              disableDoubleClickZoom: true, disableTwoFingerTapZoom: true });
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    canvas.style.display       = 'block';
-    canvas.style.pointerEvents = 'auto';
+    if (map) map.setOptions({ draggable:false, scrollWheel:false, keyboardShortcuts:false,
+                              disableDoubleClickZoom:true, disableTwoFingerTapZoom:true });
+    sizeContainers();
+    canvas.style.display = 'block'; canvas.style.pointerEvents = 'auto';
     if (!drawBound) {
       drawBound = true;
-      canvas.addEventListener('mousedown',  onDown);
-      canvas.addEventListener('mousemove',  onMove);
-      canvas.addEventListener('mouseup',    onUp);
+      canvas.addEventListener('mousedown', onDown);
+      canvas.addEventListener('mousemove', onMove);
+      canvas.addEventListener('mouseup',   onUp);
       canvas.addEventListener('mouseleave', function() { drawStart = null; clearCanvas(); });
-      canvas.addEventListener('touchstart', function(e) { e.preventDefault(); var t=e.touches[0]; onDown({clientX:t.clientX,clientY:t.clientY}); }, {passive:false});
-      canvas.addEventListener('touchmove',  function(e) { e.preventDefault(); var t=e.touches[0]; onMove({clientX:t.clientX,clientY:t.clientY}); }, {passive:false});
-      canvas.addEventListener('touchend',   function(e) { e.preventDefault(); onUp({}); }, {passive:false});
+      canvas.addEventListener('touchstart', function(e){ e.preventDefault(); var t=e.touches[0]; onDown({clientX:t.clientX,clientY:t.clientY}); },{passive:false});
+      canvas.addEventListener('touchmove',  function(e){ e.preventDefault(); var t=e.touches[0]; onMove({clientX:t.clientX,clientY:t.clientY}); },{passive:false});
+      canvas.addEventListener('touchend',   function(e){ e.preventDefault(); onUp({}); },{passive:false});
     }
   } else {
-    if (map) map.setOptions({ draggable: true, scrollWheel: true, keyboardShortcuts: true,
-                              disableDoubleClickZoom: false, disableTwoFingerTapZoom: false });
-    canvas.style.display       = 'none';
-    canvas.style.pointerEvents = 'none';
-    clearCanvas();
+    if (map) map.setOptions({ draggable:true, scrollWheel:true, keyboardShortcuts:true,
+                              disableDoubleClickZoom:false, disableTwoFingerTapZoom:false });
+    canvas.style.display = 'none'; canvas.style.pointerEvents = 'none'; clearCanvas();
   }
 }
 
-function onDown(e) {
-  var r = document.getElementById('draw-canvas').getBoundingClientRect();
-  drawStart = { x: e.clientX - r.left, y: e.clientY - r.top };
-}
-
+function onDown(e) { var r=document.getElementById('draw-canvas').getBoundingClientRect(); drawStart={x:e.clientX-r.left,y:e.clientY-r.top}; }
 function onMove(e) {
   if (!drawStart) return;
-  var canvas = document.getElementById('draw-canvas');
-  var ctx = canvas.getContext('2d');
-  var r = canvas.getBoundingClientRect();
-  var cx = e.clientX - r.left, cy = e.clientY - r.top;
-  var x = Math.min(drawStart.x, cx), y = Math.min(drawStart.y, cy);
-  var w = Math.abs(cx - drawStart.x), h = Math.abs(cy - drawStart.y);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle   = 'rgba(59,130,246,0.2)';
-  ctx.strokeStyle = '#3B82F6';
-  ctx.lineWidth   = 2;
-  ctx.setLineDash([6, 3]);
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeRect(x, y, w, h);
-  ctx.setLineDash([]);
+  var canvas=document.getElementById('draw-canvas'),ctx=canvas.getContext('2d'),r=canvas.getBoundingClientRect();
+  var cx=e.clientX-r.left,cy=e.clientY-r.top,x=Math.min(drawStart.x,cx),y=Math.min(drawStart.y,cy);
+  var w=Math.abs(cx-drawStart.x),h=Math.abs(cy-drawStart.y);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='rgba(59,130,246,0.2)'; ctx.strokeStyle='#3B82F6'; ctx.lineWidth=2;
+  ctx.setLineDash([6,3]); ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h); ctx.setLineDash([]);
 }
-
 function onUp(e) {
   if (!drawStart) return;
-  var canvas = document.getElementById('draw-canvas');
-  var r = canvas.getBoundingClientRect();
-  var ex = e.clientX !== undefined ? e.clientX - r.left : drawStart.x;
-  var ey = e.clientY !== undefined ? e.clientY - r.top  : drawStart.y;
-  var bx = Math.min(drawStart.x, ex), by = Math.min(drawStart.y, ey);
-  var bw = Math.abs(ex - drawStart.x), bh = Math.abs(ey - drawStart.y);
-  drawStart = null;
-  if (bw < 15 || bh < 15) { clearCanvas(); return; }
-
-  var pct = {
-    left:   +(bx / canvas.width  * 100).toFixed(2),
-    top:    +(by / canvas.height * 100).toFixed(2),
-    width:  +(bw / canvas.width  * 100).toFixed(2),
-    height: +(bh / canvas.height * 100).toFixed(2)
-  };
-  var center = map.getCenter();
-  postUp({ type: 'zoneDrawn', boxCoords: JSON.stringify(pct),
-           mapLat: center.lat(), mapLng: center.lng(), mapZoom: map.getZoom() });
+  var canvas=document.getElementById('draw-canvas'),r=canvas.getBoundingClientRect();
+  var ex=e.clientX!==undefined?e.clientX-r.left:drawStart.x, ey=e.clientY!==undefined?e.clientY-r.top:drawStart.y;
+  var bx=Math.min(drawStart.x,ex),by=Math.min(drawStart.y,ey),bw=Math.abs(ex-drawStart.x),bh=Math.abs(ey-drawStart.y);
+  drawStart=null;
+  if (bw<15||bh<15){clearCanvas();return;}
+  var pct={left:+(bx/canvas.width*100).toFixed(2),top:+(by/canvas.height*100).toFixed(2),
+           width:+(bw/canvas.width*100).toFixed(2),height:+(bh/canvas.height*100).toFixed(2)};
+  var center=map.getCenter();
+  postUp({type:'zoneDrawn',boxCoords:JSON.stringify(pct),mapLat:center.lat(),mapLng:center.lng(),mapZoom:map.getZoom()});
   clearCanvas();
 }
+function clearCanvas(){var c=document.getElementById('draw-canvas');c.getContext('2d').clearRect(0,0,c.width,c.height);}
 
-function clearCanvas() {
-  var c = document.getElementById('draw-canvas');
-  c.getContext('2d').clearRect(0, 0, c.width, c.height);
-}
-
-// ── 진단 상태 오버레이 ────────────────────────────────
-var _dbg = document.createElement('div');
-_dbg.style.cssText = 'position:fixed;top:8px;left:8px;z-index:999;background:rgba(0,0,0,.75);'
-  + 'color:#fff;font-size:11px;font-family:monospace;padding:6px 10px;border-radius:6px;'
-  + 'pointer-events:none;max-width:260px;line-height:1.6';
-_dbg.id = 'dbg';
-document.body.appendChild(_dbg);
-function _setDbg(msg) { var el = document.getElementById('dbg'); if(el) el.textContent = msg; }
-function _hideDbg() { setTimeout(function(){ var el=document.getElementById('dbg'); if(el) el.style.display='none'; }, 3000); }
-
-// ── 시작 — naver.maps.Map 준비까지 폴링 ─────────────
-_setDbg('① API 스크립트 로딩 중...');
-var _tries = 0;
-var _timer = setInterval(function() {
+// ── 시작 ─────────────────────────────────────────────
+var _tries=0, _timer=setInterval(function(){
   _tries++;
-  if (typeof naver !== 'undefined' && naver.maps && naver.maps.Map) {
+  if (typeof naver!=='undefined' && naver.maps && naver.maps.Map){
+    clearInterval(_timer); initMap();
+  } else if (_tries>=80){
     clearInterval(_timer);
-    _setDbg('② API 로드 완료 → 지도 초기화 중...');
-    initMap();
-  } else if (_tries >= 80) { // 8초 타임아웃
-    clearInterval(_timer);
-    _setDbg('✗ API 로드 실패 (8s timeout)');
-    document.getElementById('map').innerHTML =
-      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
-      + 'height:100%;color:#F87171;font-size:13px;text-align:center;gap:8px;font-family:sans-serif">'
-      + '<div style="font-size:28px">🗺️</div>'
-      + '<b>네이버 지도 로드 실패</b>'
-      + '<span style="color:#94A3B8;font-size:11px">NCP 도메인 등록 또는 네트워크 확인</span>'
-      + '<button onclick="location.reload()" style="margin-top:8px;padding:6px 16px;background:#185FA5;'
-      + 'color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">다시 시도</button>'
-      + '</div>';
+    setDbg('✗ API 로드 실패 (8s) — NCP 설정 확인');
   }
-}, 100);
+},100);
 </script>
 </body>
 </html>
