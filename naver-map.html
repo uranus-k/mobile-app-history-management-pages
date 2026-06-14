@@ -60,7 +60,7 @@ function initMap() {
     });
     setDbg('③ 지도 객체 생성 완료 — 타일 로딩 중...');
     // 타일 표시 확인 후 진단창 숨김
-    if (naver.maps.Event) {
+    if (naver && naver.maps && naver.maps.Event) {
       naver.maps.Event.once(map, 'tilesloaded', function() {
         setDbg('✓ 타일 로드 완료');
         setTimeout(function() {
@@ -72,12 +72,12 @@ function initMap() {
     // resize 다중 트리거 (display:none 탭에서 초기화 대비)
     [50, 200, 600].forEach(function(ms) {
       setTimeout(function() {
-        if (map && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
+        if (map && naver && naver.maps && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
       }, ms);
     });
     window.addEventListener('resize', function() {
       sizeContainers();
-      if (map && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
+      if (map && naver && naver.maps && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
     });
     postUp({ type: 'mapReady' });
   } catch(e) {
@@ -110,7 +110,7 @@ window.addEventListener('message', function(e) {
     case 'clearFilter': activeZoneId = null; renderZones(); break;
     case 'resize':
       sizeContainers();
-      if (map && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
+      if (map && naver && naver.maps && naver.maps.Event) naver.maps.Event.trigger(map, 'resize');
       break;
   }
 });
