@@ -7,11 +7,11 @@
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{width:100%;height:100%;overflow:hidden;background:#1E293B}
-  #map{position:absolute;inset:0}
-  #overlay{position:absolute;inset:0;z-index:10;pointer-events:none}
-  #draw-canvas{position:absolute;inset:0;z-index:20;display:none;pointer-events:none;cursor:crosshair}
+  /* fixed: iframe 내부에서 height:100% 체인이 깨지는 문제 방지 */
+  #map{position:fixed;inset:0}
+  #overlay{position:fixed;inset:0;z-index:10;pointer-events:none}
+  #draw-canvas{position:fixed;inset:0;z-index:20;display:none;pointer-events:none;cursor:crosshair}
 </style>
-<!-- 네이버 지도 API v3 — ncpClientId: ql5099c2b3 (도메인 제한으로 보호됨) -->
 <script src="https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=ql5099c2b3"></script>
 </head>
 <body>
@@ -25,16 +25,41 @@ var map, zones = [], activeZoneId = null, drawMode = false, drawStart = null, dr
 
 // ── 지도 초기화 ──────────────────────────────────────
 function initMap() {
-  map = new naver.maps.Map('map', {
-    center:         new naver.maps.LatLng(35.1048, 129.0355),
-    zoom:           16,
-    mapTypeId:      naver.maps.MapTypeId.HYBRID,
-    mapTypeControl: false,
-    scaleControl:   true,
-    logoControl:    true,
-    mapDataControl: false
-  });
-  postUp({ type: 'mapReady' });
+  try {
+    map = new naver.maps.Map('map', {
+      center:         new naver.maps.LatLng(35.1048, 129.0355),
+      zoom:           16,
+      mapTypeId:      naver.maps.MapTypeId.HYBRID,
+      mapTypeControl: false,
+      scaleControl:   true,
+      logoControl:    true,
+      mapDataControl: false
+    });
+    // iframe이 숨겨진 채로 초기화됐을 때 타일 미표시 방지 — 다중 resize 트리거
+    [100, 400, 900].forEach(function(ms) {
+      setTimeout(function() {
+        if (map) naver.maps.Event.trigger(map, 'resize');
+      }, ms);
+    });
+    // 뷰포트 크기 변화 감지 → 지도 리사이즈
+    if (window.ResizeObserver) {
+      new ResizeObserver(function() {
+        if (map) naver.maps.Event.trigger(map, 'resize');
+      }).observe(document.getElementById('map'));
+    }
+    window.addEventListener('resize', function() {
+      if (map) naver.maps.Event.trigger(map, 'resize');
+    });
+    postUp({ type: 'mapReady' });
+  } catch(e) {
+    document.getElementById('map').innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+      + 'height:100%;color:#F87171;font-size:13px;text-align:center;gap:8px;font-family:sans-serif">'
+      + '<div style="font-size:28px">⚠️</div>'
+      + '<b>지도 초기화 오류</b>'
+      + '<span style="color:#94A3B8;font-size:11px">' + e.message + '</span>'
+      + '</div>';
+  }
 }
 
 // ── 부모(GAS)로 메시지 전송 ──────────────────────────
@@ -52,14 +77,15 @@ window.addEventListener('message', function(e) {
       renderZones();
       break;
     case 'setView':
-      if (d.lat && d.lng) {
+      if (d.lat && d.lng && map) {
         map.setCenter(new naver.maps.LatLng(d.lat, d.lng));
         map.setZoom(d.zoom || 16, false);
       }
       break;
     case 'setMapType':
-      var t = { hybrid: naver.maps.MapTypeId.HYBRID, satellite: naver.maps.MapTypeId.SATELLITE, normal: naver.maps.MapTypeId.NORMAL };
-      map.setMapTypeId(t[d.mapType] || naver.maps.MapTypeId.HYBRID);
+      if (!map) break;
+      var mt = { hybrid: naver.maps.MapTypeId.HYBRID, satellite: naver.maps.MapTypeId.SATELLITE, normal: naver.maps.MapTypeId.NORMAL };
+      map.setMapTypeId(mt[d.mapType] || naver.maps.MapTypeId.HYBRID);
       break;
     case 'setDrawMode':
       setDrawMode(d.enabled);
@@ -71,6 +97,9 @@ window.addEventListener('message', function(e) {
     case 'clearFilter':
       activeZoneId = null;
       renderZones();
+      break;
+    case 'resize':
+      if (map) naver.maps.Event.trigger(map, 'resize');
       break;
   }
 });
@@ -98,7 +127,7 @@ function renderZones() {
       + (z.zoneName || z.zoneId)
       + (cnt ? '<div style="font-size:9px;opacity:.9;margin-top:1px">' + cnt + '건</div>' : '')
       + '</div>';
-    box.onclick = function(e) { e.stopPropagation(); postUp({ type: 'zoneClick', zoneId: z.zoneId }); };
+    box.onclick = function(ev) { ev.stopPropagation(); postUp({ type: 'zoneClick', zoneId: z.zoneId }); };
     ol.appendChild(box);
   });
 }
@@ -108,10 +137,10 @@ function setDrawMode(on) {
   drawMode = on;
   var canvas = document.getElementById('draw-canvas');
   if (on) {
-    map.setOptions({ draggable: false, scrollWheel: false, keyboardShortcuts: false,
-                     disableDoubleClickZoom: true, disableTwoFingerTapZoom: true });
-    canvas.width  = document.body.clientWidth;
-    canvas.height = document.body.clientHeight;
+    if (map) map.setOptions({ draggable: false, scrollWheel: false, keyboardShortcuts: false,
+                              disableDoubleClickZoom: true, disableTwoFingerTapZoom: true });
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
     canvas.style.display       = 'block';
     canvas.style.pointerEvents = 'auto';
     if (!drawBound) {
@@ -125,8 +154,8 @@ function setDrawMode(on) {
       canvas.addEventListener('touchend',   function(e) { e.preventDefault(); onUp({}); }, {passive:false});
     }
   } else {
-    map.setOptions({ draggable: true, scrollWheel: true, keyboardShortcuts: true,
-                     disableDoubleClickZoom: false, disableTwoFingerTapZoom: false });
+    if (map) map.setOptions({ draggable: true, scrollWheel: true, keyboardShortcuts: true,
+                              disableDoubleClickZoom: false, disableTwoFingerTapZoom: false });
     canvas.style.display       = 'none';
     canvas.style.pointerEvents = 'none';
     clearCanvas();
@@ -184,14 +213,26 @@ function clearCanvas() {
   c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
 
-// ── 시작 ─────────────────────────────────────────────
-if (typeof naver !== 'undefined' && naver.maps) {
-  initMap();
-} else {
-  var t = setInterval(function() {
-    if (typeof naver !== 'undefined' && naver.maps) { clearInterval(t); initMap(); }
-  }, 100);
-}
+// ── 시작 — naver.maps.Map 준비까지 폴링 ─────────────
+var _tries = 0;
+var _timer = setInterval(function() {
+  _tries++;
+  if (typeof naver !== 'undefined' && naver.maps && naver.maps.Map) {
+    clearInterval(_timer);
+    initMap();
+  } else if (_tries >= 80) { // 8초 타임아웃
+    clearInterval(_timer);
+    document.getElementById('map').innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+      + 'height:100%;color:#F87171;font-size:13px;text-align:center;gap:8px;font-family:sans-serif">'
+      + '<div style="font-size:28px">🗺️</div>'
+      + '<b>네이버 지도 로드 실패</b>'
+      + '<span style="color:#94A3B8;font-size:11px">NCP 도메인 등록 또는 네트워크 확인</span>'
+      + '<button onclick="location.reload()" style="margin-top:8px;padding:6px 16px;background:#185FA5;'
+      + 'color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">다시 시도</button>'
+      + '</div>';
+  }
+}, 100);
 </script>
 </body>
 </html>
