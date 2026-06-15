@@ -54,14 +54,38 @@ body{background:#0d1117;overflow:hidden;font-family:'Malgun Gothic',sans-serif}
   <span style="font-size:12px;color:#334155">관리자 패널에서 RACK을 추가하세요</span>
 </div>
 
+<!-- CDN 로드 실패 감지: 8초 안에 초기화 안되면 에러 표시 -->
+<script>
+setTimeout(function() {
+  var loadEl = document.getElementById('loading');
+  if (loadEl && loadEl.parentNode) {
+    document.getElementById('loading-text').textContent = '3D 엔진 로드 실패 — 네트워크 확인 후 새로고침';
+    document.getElementById('loading-text').style.color = '#ef4444';
+  }
+}, 8000);
+</script>
+
 <script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/controls/OrbitControls.js';
+// CDN을 skypack → jsdelivr 순서로 시도 (더 안정적)
+let THREE, OrbitControls;
+try {
+  const mod = await import('https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js');
+  THREE = mod;
+  const oc  = await import('https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/controls/OrbitControls.js');
+  OrbitControls = oc.OrbitControls;
+} catch(e) {
+  document.getElementById('loading-text').textContent = 'Three.js 로드 실패: ' + e.message;
+  document.getElementById('loading-text').style.color = '#ef4444';
+  throw e;
+}
 
 // ── Loading progress ──────────────────────────────────────────
 const fill = document.getElementById('loading-fill');
-function progress(pct) { fill.style.width = pct + '%'; }
+function progress(pct) { if(fill) fill.style.width = pct + '%'; }
 progress(20);
+
+// 나머지 초기화 전체를 try-catch로 감싸 에러 가시화
+try {
 
 // ── Renderer ─────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -498,6 +522,12 @@ setTimeout(() => {
   animate();
   postUp({ type: 'rackViewerReady' });
 }, 300);
+
+} catch(initErr) {
+  const lt = document.getElementById('loading-text');
+  if (lt) { lt.textContent = '초기화 오류: ' + initErr.message; lt.style.color = '#ef4444'; }
+  console.error('[rack-viewer] init error:', initErr);
+}
 </script>
 </body>
 </html>
