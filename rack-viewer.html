@@ -186,97 +186,133 @@ function buildRack(rd) {
   var g      = new THREE.Group();
   var floors = Math.max(1, Number(rd.floors) || 3);
   var cols   = Math.max(1, Number(rd.cols)   || 4);
-  var rW     = cols   * CW;
-  var rH     = floors * CH;
+  var rows   = Math.max(1, Number(rd.rows)   || 1);
+  var rW = cols  * CW;
+  var rH = floors * CH;
+  var rD = rows  * CD;
 
   var occ = {};
   (rd.cells || []).forEach(function(cell) {
-    if (cell.palletId) occ[cell.floor + '_' + cell.col] = cell.palletId;
+    if (cell.palletId) occ[cell.floor + '_' + (cell.row || 1) + '_' + cell.col] = cell.palletId;
   });
 
-  // Corner posts
+  // Corner posts (4 outer corners)
   var postH   = rH + SH * (floors + 1);
   var postGeo = new THREE.BoxGeometry(PT, postH, PT);
-  [[0, 0], [rW, 0], [0, CD], [rW, CD]].forEach(function(xz) {
+  [[0, 0], [rW, 0], [0, rD], [rW, rD]].forEach(function(xz) {
     var m = new THREE.Mesh(postGeo, steelMat.clone());
     m.position.set(xz[0], postH / 2, xz[1]);
     m.castShadow = true;
     g.add(m);
   });
 
-  // Shelves
-  var shGeo = new THREE.BoxGeometry(rW + PT, SH, CD + PT);
+  // Intermediate row posts (rows > 1)
+  for (var rowIdx = 1; rowIdx < rows; rowIdx++) {
+    var rz = rowIdx * CD;
+    [[0, rz], [rW, rz]].forEach(function(xz) {
+      var mp = new THREE.Mesh(postGeo, steelMat.clone());
+      mp.position.set(xz[0], postH / 2, xz[1]);
+      mp.castShadow = true;
+      g.add(mp);
+    });
+  }
+
+  // Shelves (full depth rD)
+  var shGeo = new THREE.BoxGeometry(rW + PT, SH, rD + PT);
   for (var f = 0; f <= floors; f++) {
     var sh = new THREE.Mesh(shGeo, shelfMat.clone());
-    sh.position.set(rW / 2, f * CH, CD / 2);
+    sh.position.set(rW / 2, f * CH, rD / 2);
     sh.castShadow = true; sh.receiveShadow = true;
     g.add(sh);
   }
 
-  // Front/back rails
+  // Front/back/row rails (along X axis, one per row boundary per floor)
   var railGeo = new THREE.BoxGeometry(rW, PT * 0.6, PT * 0.5);
   for (var fr = 1; fr <= floors; fr++) {
     var y = (fr - 0.5) * CH;
-    [0, CD].forEach(function(z) {
-      var r = new THREE.Mesh(railGeo, steelMat.clone());
-      r.position.set(rW / 2, y, z);
-      g.add(r);
+    for (var rowIdx = 0; rowIdx <= rows; rowIdx++) {
+      var rl = new THREE.Mesh(railGeo, steelMat.clone());
+      rl.position.set(rW / 2, y, rowIdx * CD);
+      g.add(rl);
+    }
+  }
+
+  // Side rails (along Z axis, at X=0 and X=rW)
+  var sideRailGeo = new THREE.BoxGeometry(PT * 0.5, PT * 0.6, rD);
+  for (var fr = 1; fr <= floors; fr++) {
+    var y = (fr - 0.5) * CH;
+    [0, rW].forEach(function(x) {
+      var rl = new THREE.Mesh(sideRailGeo, steelMat.clone());
+      rl.position.set(x, y, rD / 2);
+      g.add(rl);
     });
   }
 
-  // Cell dividers
-  var dGeo = new THREE.BoxGeometry(PT * 0.55, rH, PT * 0.55);
+  // Column dividers (vertical, runs full depth)
+  var dGeo = new THREE.BoxGeometry(PT * 0.55, rH, rD);
   for (var ci = 1; ci < cols; ci++) {
-    var d = new THREE.Mesh(dGeo, divMat.clone());
-    d.position.set(ci * CW, rH / 2, CD / 2);
-    g.add(d);
+    var dv = new THREE.Mesh(dGeo, divMat.clone());
+    dv.position.set(ci * CW, rH / 2, rD / 2);
+    g.add(dv);
   }
 
-  // Cell boxes
+  // Row dividers (perpendicular to depth — only when rows > 1)
+  if (rows > 1) {
+    var rdGeo = new THREE.BoxGeometry(rW, rH, PT * 0.55);
+    for (var rowIdx = 1; rowIdx < rows; rowIdx++) {
+      var rdv = new THREE.Mesh(rdGeo, divMat.clone());
+      rdv.position.set(rW / 2, rH / 2, rowIdx * CD);
+      g.add(rdv);
+    }
+  }
+
+  // Cell boxes (floor × row × col)
   var PW = CW * 0.80, PH = CH * 0.74, PD = CD * 0.78;
   var cellGeo = new THREE.BoxGeometry(PW, PH, PD);
 
   for (var fl = 1; fl <= floors; fl++) {
-    for (var col = 1; col <= cols; col++) {
-      var key      = fl + '_' + col;
-      var palletId = occ[key] || null;
-      var px = (col - 0.5) * CW;
-      var py = (fl  - 0.5) * CH;
-      var pz = CD / 2;
+    for (var rw = 1; rw <= rows; rw++) {
+      for (var col = 1; col <= cols; col++) {
+        var key      = fl + '_' + rw + '_' + col;
+        var palletId = occ[key] || null;
+        var px = (col - 0.5) * CW;
+        var py = (fl  - 0.5) * CH;
+        var pz = (rw  - 0.5) * CD;
 
-      var mat;
-      if (palletId) {
-        mat = new THREE.MeshStandardMaterial({ color: 0x16a34a, metalness: 0.08, roughness: 0.62 });
-      } else {
-        mat = new THREE.MeshStandardMaterial({ color: 0x2563eb, transparent: true, opacity: 0.14, roughness: 0.85 });
-      }
+        var mat;
+        if (palletId) {
+          mat = new THREE.MeshStandardMaterial({ color: 0x16a34a, metalness: 0.08, roughness: 0.62 });
+        } else {
+          mat = new THREE.MeshStandardMaterial({ color: 0x2563eb, transparent: true, opacity: 0.14, roughness: 0.85 });
+        }
 
-      var box = new THREE.Mesh(cellGeo.clone(), mat);
-      box.position.set(px, py, pz);
-      if (palletId) { box.castShadow = true; box.receiveShadow = true; }
-      box.userData = {
-        type: 'cell', rackId: rd.rackId, rackName: rd.rackName || rd.rackId,
-        floor: fl, col: col, palletId: palletId, occupied: !!palletId
-      };
-      g.add(box);
-      clickables.push(box);
+        var box = new THREE.Mesh(cellGeo.clone(), mat);
+        box.position.set(px, py, pz);
+        if (palletId) { box.castShadow = true; box.receiveShadow = true; }
+        box.userData = {
+          type: 'cell', rackId: rd.rackId, rackName: rd.rackName || rd.rackId,
+          floor: fl, row: rw, col: col, palletId: palletId, occupied: !!palletId
+        };
+        g.add(box);
+        clickables.push(box);
 
-      if (!palletId) {
-        var eg = new THREE.EdgesGeometry(cellGeo.clone());
-        var lm = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
-        var ls = new THREE.LineSegments(eg, lm);
-        ls.position.set(px, py, pz);
-        g.add(ls);
+        if (!palletId) {
+          var eg = new THREE.EdgesGeometry(cellGeo.clone());
+          var lm = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
+          var ls = new THREE.LineSegments(eg, lm);
+          ls.position.set(px, py, pz);
+          g.add(ls);
+        }
       }
     }
   }
 
   // Label
   var spr = makeSprite(rd.rackName || rd.rackId);
-  spr.position.set(rW / 2, rH + SH * (floors + 1) + 0.45, CD / 2);
+  spr.position.set(rW / 2, rH + SH * (floors + 1) + 0.45, rD / 2);
   g.add(spr);
 
-  g.userData = { rackId: rd.rackId, rW: rW, rH: rH };
+  g.userData = { rackId: rd.rackId, rW: rW, rH: rH, rD: rD };
   return g;
 }
 
@@ -308,24 +344,29 @@ function rebuildScene(rackList) {
   var totalW = offsetX - RACK_GAP;
   Object.keys(rackGroups).forEach(function(k) { rackGroups[k].position.x -= totalW / 2; });
 
-  var maxH = 0;
-  rackList.forEach(function(r) { maxH = Math.max(maxH, (Number(r.floors) || 3) * CH); });
-  var camDist = Math.max(totalW * 0.75, 10) + 6;
+  var maxH = 0, maxD = 0;
+  rackList.forEach(function(r) {
+    maxH = Math.max(maxH, (Number(r.floors) || 3) * CH);
+    maxD = Math.max(maxD, (Number(r.rows)   || 1)  * CD);
+  });
+  var camDist = Math.max(totalW * 0.75, 10) + 6 + maxD;
   camera.position.set(0, maxH * 0.7 + 3, camDist);
-  controls.target.set(0, maxH * 0.45, 0);
+  controls.target.set(0, maxH * 0.45, maxD / 2);
   controls.update();
   camTargetPos = null; camTargetLook = null;
 }
 
 // ── Highlight ───────────────────────────────────────────────────
-function highlightCell(rackId, floor, col) {
+function highlightCell(rackId, floor, row, col) {
   clearHighlight();
   var grp = rackGroups[rackId];
   if (!grp) return;
+  var targetRow = Number(row || 1);
   var found = null;
   grp.traverse(function(c) {
     if (c.isMesh && c.userData.type === 'cell'
         && c.userData.floor === Number(floor)
+        && c.userData.row   === targetRow
         && c.userData.col   === Number(col)) { found = c; }
   });
   if (!found) return;
@@ -366,7 +407,7 @@ renderer.domElement.addEventListener('mousemove', function(e) {
     var u = hits[0].object.userData;
     if (hovered !== hits[0].object) {
       hovered = hits[0].object;
-      document.getElementById('tt-title').textContent = (u.rackName || u.rackId) + ' · ' + u.floor + 'F · ' + u.col + '번 칸';
+      document.getElementById('tt-title').textContent = (u.rackName || u.rackId) + ' · ' + u.floor + 'F' + (u.row > 1 ? ' · ' + u.row + '행' : '') + ' · ' + u.col + '칸';
       document.getElementById('tt-body').innerHTML = u.palletId
         ? '<span style="color:#4ade80;font-weight:700">● 팔레트 있음</span>  ' + u.palletId
         : '<span style="color:#3b82f6;opacity:.9">○ 비어있음</span>';
@@ -387,7 +428,7 @@ renderer.domElement.addEventListener('click', function(e) {
   var hits = raycaster.intersectObjects(clickables, false);
   if (hits.length) {
     var u = hits[0].object.userData;
-    postUp({ type: 'cellClick', rackId: u.rackId, floor: u.floor, col: u.col, palletId: u.palletId, occupied: u.occupied });
+    postUp({ type: 'cellClick', rackId: u.rackId, floor: u.floor, row: u.row, col: u.col, palletId: u.palletId, occupied: u.occupied });
     tooltip.style.display = 'none';
   }
 });
@@ -403,16 +444,16 @@ window.addEventListener('message', function(e) {
   var d = e.data;
   if (!d || !d.type) return;
   if (d.type === 'setRacks')       { rebuildScene(d.racks || []); }
-  else if (d.type === 'highlightCell') { highlightCell(d.rackId, d.floor, d.col); }
+  else if (d.type === 'highlightCell') { highlightCell(d.rackId, d.floor, d.row, d.col); }
   else if (d.type === 'clearHighlight') { clearHighlight(); }
   else if (d.type === 'focusRack') {
     var grp = rackGroups[d.rackId];
     if (grp) {
       var wp = new THREE.Vector3();
       grp.getWorldPosition(wp);
-      var rW = grp.userData.rW || 4, rH = grp.userData.rH || 3;
-      camTargetPos  = new THREE.Vector3(wp.x + rW / 2, rH * 0.6 + 2, wp.z + rW * 0.8 + 6);
-      camTargetLook = new THREE.Vector3(wp.x + rW / 2, rH / 2, wp.z);
+      var rW = grp.userData.rW || 4, rH = grp.userData.rH || 3, rD2 = grp.userData.rD || CD;
+      camTargetPos  = new THREE.Vector3(wp.x + rW / 2, rH * 0.6 + 2, wp.z + rD2 / 2 + rW * 0.8 + 6);
+      camTargetLook = new THREE.Vector3(wp.x + rW / 2, rH / 2, wp.z + rD2 / 2);
     }
   }
   else if (d.type === 'ping') { postUp({ type: 'rackViewerReady' }); }
