@@ -54,41 +54,27 @@ body{background:#0d1117;overflow:hidden;font-family:'Malgun Gothic',sans-serif}
   <span style="font-size:12px;color:#334155">관리자 패널에서 RACK을 추가하세요</span>
 </div>
 
-<!-- CDN 로드 실패 감지: 8초 안에 초기화 안되면 에러 표시 -->
-<script>
-setTimeout(function() {
-  var loadEl = document.getElementById('loading');
-  if (loadEl && loadEl.parentNode) {
-    document.getElementById('loading-text').textContent = '3D 엔진 로드 실패 — 네트워크 확인 후 새로고침';
-    document.getElementById('loading-text').style.color = '#ef4444';
-  }
-}, 8000);
-</script>
+<!-- UMD 빌드: ES 모듈 불필요, 일반 script 태그로 로드 -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/controls/OrbitControls.js"></script>
 
-<script type="module">
-// CDN을 skypack → jsdelivr 순서로 시도 (더 안정적)
-let THREE, OrbitControls;
-try {
-  const mod = await import('https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js');
-  THREE = mod;
-  const oc  = await import('https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/controls/OrbitControls.js');
-  OrbitControls = oc.OrbitControls;
-} catch(e) {
-  document.getElementById('loading-text').textContent = 'Three.js 로드 실패: ' + e.message;
-  document.getElementById('loading-text').style.color = '#ef4444';
-  throw e;
+<script>
+(function() {
+'use strict';
+
+var fill = document.getElementById('loading-fill');
+function progress(pct) { if (fill) fill.style.width = pct + '%'; }
+function showError(msg) {
+  var lt = document.getElementById('loading-text');
+  if (lt) { lt.textContent = msg; lt.style.color = '#ef4444'; }
 }
 
-// ── Loading progress ──────────────────────────────────────────
-const fill = document.getElementById('loading-fill');
-function progress(pct) { if(fill) fill.style.width = pct + '%'; }
+// Three.js 로드 확인
+if (typeof THREE === 'undefined') { showError('Three.js 로드 실패 — 네트워크를 확인하세요'); return; }
 progress(20);
 
-// 나머지 초기화 전체를 try-catch로 감싸 에러 가시화
-try {
-
-// ── Renderer ─────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+// ── Renderer ────────────────────────────────────────────────────
+var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -98,31 +84,31 @@ renderer.toneMappingExposure = 1.3;
 document.body.appendChild(renderer.domElement);
 progress(40);
 
-// ── Scene ─────────────────────────────────────────────────────
-const scene = new THREE.Scene();
+// ── Scene ───────────────────────────────────────────────────────
+var scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d1117);
 scene.fog = new THREE.FogExp2(0x0d1117, 0.016);
 
-// ── Camera ────────────────────────────────────────────────────
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+// ── Camera ──────────────────────────────────────────────────────
+var camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
 camera.position.set(0, 8, 18);
 
-// ── Controls ──────────────────────────────────────────────────
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping  = true;
-controls.dampingFactor  = 0.07;
-controls.minDistance    = 2;
-controls.maxDistance    = 80;
-controls.maxPolarAngle  = Math.PI * 0.87;
+// ── Controls ────────────────────────────────────────────────────
+var controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance   = 2;
+controls.maxDistance   = 80;
+controls.maxPolarAngle = Math.PI * 0.87;
 controls.target.set(0, 2, 0);
 controls.update();
 progress(60);
 
-// ── Lights ────────────────────────────────────────────────────
-const ambient = new THREE.AmbientLight(0x8baabe, 0.7);
+// ── Lights ──────────────────────────────────────────────────────
+var ambient = new THREE.AmbientLight(0x8baabe, 0.7);
 scene.add(ambient);
 
-const sun = new THREE.DirectionalLight(0xfff5e0, 2.2);
+var sun = new THREE.DirectionalLight(0xfff5e0, 2.2);
 sun.position.set(12, 22, 12);
 sun.castShadow = true;
 sun.shadow.mapSize.width  = 2048;
@@ -134,239 +120,210 @@ sun.shadow.camera.right = sun.shadow.camera.top   =  25;
 sun.shadow.bias = -0.0005;
 scene.add(sun);
 
-const fill2 = new THREE.DirectionalLight(0x4466dd, 0.55);
-fill2.position.set(-10, 6, -8);
-scene.add(fill2);
+var fillLight = new THREE.DirectionalLight(0x4466dd, 0.55);
+fillLight.position.set(-10, 6, -8);
+scene.add(fillLight);
 
-const bluePt = new THREE.PointLight(0x1d4ed8, 2.0, 30);
+var bluePt = new THREE.PointLight(0x1d4ed8, 2.0, 30);
 bluePt.position.set(0, 1, 3);
 scene.add(bluePt);
 
-// ── Floor ─────────────────────────────────────────────────────
-const floorGeo = new THREE.PlaneGeometry(80, 80);
-const floorMat = new THREE.MeshStandardMaterial({
-  color: 0x0e1520, metalness: 0.15, roughness: 0.95
-});
-const floor = new THREE.Mesh(floorGeo, floorMat);
+// ── Floor ───────────────────────────────────────────────────────
+var floorGeo = new THREE.PlaneGeometry(80, 80);
+var floorMat = new THREE.MeshStandardMaterial({ color: 0x0e1520, metalness: 0.15, roughness: 0.95 });
+var floor = new THREE.Mesh(floorGeo, floorMat);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-const grid = new THREE.GridHelper(80, 40, 0x1e3a5f, 0x111e30);
+var grid = new THREE.GridHelper(80, 40, 0x1e3a5f, 0x111e30);
 grid.position.y = 0.002;
 scene.add(grid);
 
-// ── Shared Materials ──────────────────────────────────────────
-const steelMat = new THREE.MeshStandardMaterial({
-  color: 0xa0b0c4, metalness: 0.85, roughness: 0.20
-});
-const shelfMat = new THREE.MeshStandardMaterial({
-  color: 0x5a6880, metalness: 0.72, roughness: 0.40
-});
-const divMat = new THREE.MeshStandardMaterial({
-  color: 0x3a4a5a, metalness: 0.65, roughness: 0.55
-});
+// ── Shared Materials ────────────────────────────────────────────
+var steelMat = new THREE.MeshStandardMaterial({ color: 0xa0b0c4, metalness: 0.85, roughness: 0.20 });
+var shelfMat = new THREE.MeshStandardMaterial({ color: 0x5a6880, metalness: 0.72, roughness: 0.40 });
+var divMat   = new THREE.MeshStandardMaterial({ color: 0x3a4a5a, metalness: 0.65, roughness: 0.55 });
 
-// ── Constants ─────────────────────────────────────────────────
-const CW = 1.30; // cell width
-const CH = 1.10; // cell height
-const CD = 0.90; // cell depth
-const PT = 0.065; // post thickness
-const SH = 0.048; // shelf height
+// ── Constants ───────────────────────────────────────────────────
+var CW = 1.30, CH = 1.10, CD = 0.90, PT = 0.065, SH = 0.048;
 
-// ── State ─────────────────────────────────────────────────────
-let rackGroups   = {};     // rackId → THREE.Group
-let clickables   = [];     // meshes for raycasting
-let highlighted  = null;   // {mesh, origMat}
-let highlightT   = 0;
-let camTargetPos = null;
-let camTargetLook = null;
-const CAM_SPEED  = 0.05;
+// ── State ───────────────────────────────────────────────────────
+var rackGroups   = {};
+var clickables   = [];
+var highlighted  = null;
+var highlightT   = 0;
+var camTargetPos  = null;
+var camTargetLook = null;
+var CAM_SPEED = 0.05;
 
-// ── Label Sprite ──────────────────────────────────────────────
+// ── Label Sprite ────────────────────────────────────────────────
 function makeSprite(text) {
-  const c = document.createElement('canvas');
+  var c = document.createElement('canvas');
   c.width = 320; c.height = 72;
-  const ctx = c.getContext('2d');
-  // background pill
+  var ctx = c.getContext('2d');
   ctx.fillStyle = 'rgba(91,33,182,0.92)';
   ctx.beginPath();
-  if (ctx.roundRect) { ctx.roundRect(3, 3, 314, 66, 14); } else { ctx.rect(3, 3, 314, 66); }
+  ctx.rect(3, 3, 314, 66);
   ctx.fill();
-  // border
   ctx.strokeStyle = 'rgba(167,139,250,0.5)';
   ctx.lineWidth = 2;
   ctx.stroke();
-  // text
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 22px Malgun Gothic, Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 160, 36);
-  const tex = new THREE.CanvasTexture(c);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-  const spr = new THREE.Sprite(mat);
+  var tex = new THREE.CanvasTexture(c);
+  var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  var spr = new THREE.Sprite(mat);
   spr.scale.set(2.6, 0.58, 1);
   return spr;
 }
 
-// ── RACK Builder ──────────────────────────────────────────────
+// ── RACK Builder ────────────────────────────────────────────────
 function buildRack(rd) {
-  const g      = new THREE.Group();
-  const floors = Math.max(1, Number(rd.floors) || 3);
-  const cols   = Math.max(1, Number(rd.cols)   || 4);
-  const rW     = cols   * CW;
-  const rH     = floors * CH;
+  var g      = new THREE.Group();
+  var floors = Math.max(1, Number(rd.floors) || 3);
+  var cols   = Math.max(1, Number(rd.cols)   || 4);
+  var rW     = cols   * CW;
+  var rH     = floors * CH;
 
-  // Build occupied cell map
-  const occ = {};
-  (rd.cells || []).forEach(c => {
-    if (c.palletId) occ[`${c.floor}_${c.col}`] = c.palletId;
+  var occ = {};
+  (rd.cells || []).forEach(function(cell) {
+    if (cell.palletId) occ[cell.floor + '_' + cell.col] = cell.palletId;
   });
 
-  // ── Corner posts ──
-  const postH   = rH + SH * (floors + 1);
-  const postGeo = new THREE.BoxGeometry(PT, postH, PT);
-  [[0, 0], [rW, 0], [0, CD], [rW, CD]].forEach(([x, z]) => {
-    const m = new THREE.Mesh(postGeo, steelMat.clone());
-    m.position.set(x, postH / 2, z);
+  // Corner posts
+  var postH   = rH + SH * (floors + 1);
+  var postGeo = new THREE.BoxGeometry(PT, postH, PT);
+  [[0, 0], [rW, 0], [0, CD], [rW, CD]].forEach(function(xz) {
+    var m = new THREE.Mesh(postGeo, steelMat.clone());
+    m.position.set(xz[0], postH / 2, xz[1]);
     m.castShadow = true;
     g.add(m);
   });
 
-  // ── Horizontal shelves ──
-  const shGeo = new THREE.BoxGeometry(rW + PT, SH, CD + PT);
-  for (let f = 0; f <= floors; f++) {
-    const sh = new THREE.Mesh(shGeo, shelfMat.clone());
+  // Shelves
+  var shGeo = new THREE.BoxGeometry(rW + PT, SH, CD + PT);
+  for (var f = 0; f <= floors; f++) {
+    var sh = new THREE.Mesh(shGeo, shelfMat.clone());
     sh.position.set(rW / 2, f * CH, CD / 2);
-    sh.castShadow = true;
-    sh.receiveShadow = true;
+    sh.castShadow = true; sh.receiveShadow = true;
     g.add(sh);
   }
 
-  // ── Front/back rails mid-floor ──
-  const railGeo = new THREE.BoxGeometry(rW, PT * 0.6, PT * 0.5);
-  for (let f = 1; f <= floors; f++) {
-    const y = (f - 0.5) * CH;
-    [0, CD].forEach(z => {
-      const r = new THREE.Mesh(railGeo, steelMat.clone());
+  // Front/back rails
+  var railGeo = new THREE.BoxGeometry(rW, PT * 0.6, PT * 0.5);
+  for (var fr = 1; fr <= floors; fr++) {
+    var y = (fr - 0.5) * CH;
+    [0, CD].forEach(function(z) {
+      var r = new THREE.Mesh(railGeo, steelMat.clone());
       r.position.set(rW / 2, y, z);
       g.add(r);
     });
   }
 
-  // ── Vertical cell dividers ──
-  const dGeo = new THREE.BoxGeometry(PT * 0.55, rH, PT * 0.55);
-  for (let c = 1; c < cols; c++) {
-    const d = new THREE.Mesh(dGeo, divMat.clone());
-    d.position.set(c * CW, rH / 2, CD / 2);
+  // Cell dividers
+  var dGeo = new THREE.BoxGeometry(PT * 0.55, rH, PT * 0.55);
+  for (var ci = 1; ci < cols; ci++) {
+    var d = new THREE.Mesh(dGeo, divMat.clone());
+    d.position.set(ci * CW, rH / 2, CD / 2);
     g.add(d);
   }
 
-  // ── Cell pallets / ghosts ──
-  const PW = CW * 0.80;
-  const PH = CH * 0.74;
-  const PD = CD * 0.78;
-  const cellGeo = new THREE.BoxGeometry(PW, PH, PD);
+  // Cell boxes
+  var PW = CW * 0.80, PH = CH * 0.74, PD = CD * 0.78;
+  var cellGeo = new THREE.BoxGeometry(PW, PH, PD);
 
-  for (let f = 1; f <= floors; f++) {
-    for (let c = 1; c <= cols; c++) {
-      const key     = `${f}_${c}`;
-      const palletId = occ[key] || null;
-      const px = (c - 0.5) * CW;
-      const py = (f - 0.5) * CH;
-      const pz = CD / 2;
+  for (var fl = 1; fl <= floors; fl++) {
+    for (var col = 1; col <= cols; col++) {
+      var key      = fl + '_' + col;
+      var palletId = occ[key] || null;
+      var px = (col - 0.5) * CW;
+      var py = (fl  - 0.5) * CH;
+      var pz = CD / 2;
 
-      let mat;
+      var mat;
       if (palletId) {
-        mat = new THREE.MeshStandardMaterial({
-          color: 0x16a34a, metalness: 0.08, roughness: 0.62,
-          transparent: false, opacity: 1
-        });
+        mat = new THREE.MeshStandardMaterial({ color: 0x16a34a, metalness: 0.08, roughness: 0.62 });
       } else {
-        mat = new THREE.MeshStandardMaterial({
-          color: 0x2563eb, metalness: 0.0, roughness: 0.85,
-          transparent: true, opacity: 0.14
-        });
+        mat = new THREE.MeshStandardMaterial({ color: 0x2563eb, transparent: true, opacity: 0.14, roughness: 0.85 });
       }
 
-      const box = new THREE.Mesh(cellGeo.clone(), mat);
+      var box = new THREE.Mesh(cellGeo.clone(), mat);
       box.position.set(px, py, pz);
       if (palletId) { box.castShadow = true; box.receiveShadow = true; }
       box.userData = {
         type: 'cell', rackId: rd.rackId, rackName: rd.rackName || rd.rackId,
-        floor: f, col: c, palletId, occupied: !!palletId
+        floor: fl, col: col, palletId: palletId, occupied: !!palletId
       };
       g.add(box);
       clickables.push(box);
 
-      // Wireframe outline for empty cells
       if (!palletId) {
-        const eg  = new THREE.EdgesGeometry(cellGeo.clone());
-        const lm  = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
-        const ls  = new THREE.LineSegments(eg, lm);
+        var eg = new THREE.EdgesGeometry(cellGeo.clone());
+        var lm = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.3 });
+        var ls = new THREE.LineSegments(eg, lm);
         ls.position.set(px, py, pz);
         g.add(ls);
       }
     }
   }
 
-  // ── Rack label sprite ──
-  const spr = makeSprite(rd.rackName || rd.rackId);
+  // Label
+  var spr = makeSprite(rd.rackName || rd.rackId);
   spr.position.set(rW / 2, rH + SH * (floors + 1) + 0.45, CD / 2);
   g.add(spr);
 
-  g.userData = { rackId: rd.rackId, rW, rH };
+  g.userData = { rackId: rd.rackId, rW: rW, rH: rH };
   return g;
 }
 
-// ── Scene rebuild ─────────────────────────────────────────────
+// ── Scene rebuild ───────────────────────────────────────────────
 function rebuildScene(rackList) {
-  // Dispose old racks
-  Object.values(rackGroups).forEach(g => {
-    g.traverse(c => { if (c.isMesh) { c.geometry.dispose(); if (c.material && c.material.dispose) c.material.dispose(); } });
-    scene.remove(g);
+  Object.keys(rackGroups).forEach(function(k) {
+    var grp = rackGroups[k];
+    grp.traverse(function(c) {
+      if (c.isMesh) { c.geometry.dispose(); if (c.material && c.material.dispose) c.material.dispose(); }
+    });
+    scene.remove(grp);
   });
-  rackGroups = {};
-  clickables = [];
-  highlighted = null;
+  rackGroups = {}; clickables = []; highlighted = null;
 
-  const emEl = document.getElementById('empty-msg');
+  var emEl = document.getElementById('empty-msg');
   if (!rackList || !rackList.length) { emEl.style.display = 'flex'; return; }
   emEl.style.display = 'none';
 
-  let offsetX = 0;
-  const RACK_GAP = 1.6;
-  rackList.forEach(rd => {
-    const g  = buildRack(rd);
-    const rW = (Number(rd.cols) || 4) * CW;
+  var offsetX = 0, RACK_GAP = 1.6;
+  rackList.forEach(function(rd) {
+    var g  = buildRack(rd);
+    var rW = (Number(rd.cols) || 4) * CW;
     g.position.set(offsetX, 0, 0);
     scene.add(g);
     rackGroups[rd.rackId] = g;
     offsetX += rW + RACK_GAP;
   });
 
-  // Center all racks along X
-  const totalW = offsetX - RACK_GAP;
-  Object.values(rackGroups).forEach(g => { g.position.x -= totalW / 2; });
+  var totalW = offsetX - RACK_GAP;
+  Object.keys(rackGroups).forEach(function(k) { rackGroups[k].position.x -= totalW / 2; });
 
-  // Reset camera to frame all racks
-  const maxH   = Math.max(...rackList.map(r => (Number(r.floors) || 3) * CH));
-  const camDist = Math.max(totalW * 0.75, 10) + 6;
+  var maxH = 0;
+  rackList.forEach(function(r) { maxH = Math.max(maxH, (Number(r.floors) || 3) * CH); });
+  var camDist = Math.max(totalW * 0.75, 10) + 6;
   camera.position.set(0, maxH * 0.7 + 3, camDist);
   controls.target.set(0, maxH * 0.45, 0);
   controls.update();
-  camTargetPos  = null;
-  camTargetLook = null;
+  camTargetPos = null; camTargetLook = null;
 }
 
-// ── Highlight ─────────────────────────────────────────────────
+// ── Highlight ───────────────────────────────────────────────────
 function highlightCell(rackId, floor, col) {
   clearHighlight();
-  const grp = rackGroups[rackId];
+  var grp = rackGroups[rackId];
   if (!grp) return;
-  let found = null;
-  grp.traverse(c => {
+  var found = null;
+  grp.traverse(function(c) {
     if (c.isMesh && c.userData.type === 'cell'
         && c.userData.floor === Number(floor)
         && c.userData.col   === Number(col)) { found = c; }
@@ -375,49 +332,41 @@ function highlightCell(rackId, floor, col) {
   highlighted = { mesh: found, origMat: found.material };
   found.material = new THREE.MeshStandardMaterial({
     color: 0xff1a1a, emissive: new THREE.Color(0xff0000),
-    emissiveIntensity: 0.9, metalness: 0.1, roughness: 0.35,
-    transparent: false
+    emissiveIntensity: 0.9, metalness: 0.1, roughness: 0.35
   });
   highlightT = 0;
-
-  // Animate camera to focus
-  const wp = new THREE.Vector3();
+  var wp = new THREE.Vector3();
   found.getWorldPosition(wp);
   camTargetPos  = wp.clone().add(new THREE.Vector3(2.5, 2.0, 4.5));
   camTargetLook = wp.clone();
 }
 
 function clearHighlight() {
-  if (highlighted) {
-    highlighted.mesh.material = highlighted.origMat;
-    highlighted = null; highlightT = 0;
-  }
+  if (highlighted) { highlighted.mesh.material = highlighted.origMat; highlighted = null; highlightT = 0; }
   camTargetPos = null;
 }
 
-// ── Raycaster / Mouse ─────────────────────────────────────────
-const raycaster = new THREE.Raycaster();
-const mouse     = new THREE.Vector2();
-const tooltip   = document.getElementById('tooltip');
-let hovered     = null;
+// ── Raycaster ───────────────────────────────────────────────────
+var raycaster = new THREE.Raycaster();
+var mouse     = new THREE.Vector2();
+var tooltip   = document.getElementById('tooltip');
+var hovered   = null;
 
 function getCanvasMouse(e) {
-  const r = renderer.domElement.getBoundingClientRect();
-  mouse.x = ((e.clientX - r.left) / r.width)  *  2 - 1;
-  mouse.y = ((e.clientY - r.top)  / r.height) * -2 + 1;
+  var r = renderer.domElement.getBoundingClientRect();
+  mouse.x =  ((e.clientX - r.left) / r.width)  * 2 - 1;
+  mouse.y = -((e.clientY - r.top)  / r.height)  * 2 + 1;
 }
 
-renderer.domElement.addEventListener('mousemove', e => {
+renderer.domElement.addEventListener('mousemove', function(e) {
   getCanvasMouse(e);
   raycaster.setFromCamera(mouse, camera);
-  const hits = raycaster.intersectObjects(clickables, false);
-
+  var hits = raycaster.intersectObjects(clickables, false);
   if (hits.length) {
-    const u = hits[0].object.userData;
+    var u = hits[0].object.userData;
     if (hovered !== hits[0].object) {
       hovered = hits[0].object;
-      document.getElementById('tt-title').textContent =
-        (u.rackName || u.rackId) + ' · ' + u.floor + 'F · ' + u.col + '번 칸';
+      document.getElementById('tt-title').textContent = (u.rackName || u.rackId) + ' · ' + u.floor + 'F · ' + u.col + '번 칸';
       document.getElementById('tt-body').innerHTML = u.palletId
         ? '<span style="color:#4ade80;font-weight:700">● 팔레트 있음</span>  ' + u.palletId
         : '<span style="color:#3b82f6;opacity:.9">○ 비어있음</span>';
@@ -427,107 +376,87 @@ renderer.domElement.addEventListener('mousemove', e => {
     tooltip.style.top  = (e.clientY - 8)  + 'px';
     renderer.domElement.style.cursor = 'pointer';
   } else {
-    hovered = null;
-    tooltip.style.display = 'none';
+    hovered = null; tooltip.style.display = 'none';
     renderer.domElement.style.cursor = 'default';
   }
 });
 
-renderer.domElement.addEventListener('click', e => {
+renderer.domElement.addEventListener('click', function(e) {
   getCanvasMouse(e);
   raycaster.setFromCamera(mouse, camera);
-  const hits = raycaster.intersectObjects(clickables, false);
+  var hits = raycaster.intersectObjects(clickables, false);
   if (hits.length) {
-    const u = hits[0].object.userData;
-    postUp({ type: 'cellClick', rackId: u.rackId, floor: u.floor,
-             col: u.col, palletId: u.palletId, occupied: u.occupied });
+    var u = hits[0].object.userData;
+    postUp({ type: 'cellClick', rackId: u.rackId, floor: u.floor, col: u.col, palletId: u.palletId, occupied: u.occupied });
     tooltip.style.display = 'none';
   }
 });
 
-renderer.domElement.addEventListener('mouseleave', () => {
-  tooltip.style.display = 'none';
-  hovered = null;
+renderer.domElement.addEventListener('mouseleave', function() {
+  tooltip.style.display = 'none'; hovered = null;
 });
 
-// ── postMessage ───────────────────────────────────────────────
+// ── postMessage ─────────────────────────────────────────────────
 function postUp(msg) { try { window.parent.postMessage(msg, '*'); } catch(e) {} }
 
-window.addEventListener('message', e => {
-  const d = e.data;
+window.addEventListener('message', function(e) {
+  var d = e.data;
   if (!d || !d.type) return;
-  switch (d.type) {
-    case 'setRacks':
-      rebuildScene(d.racks || []);
-      break;
-    case 'highlightCell':
-      highlightCell(d.rackId, d.floor, d.col);
-      break;
-    case 'clearHighlight':
-      clearHighlight();
-      break;
-    case 'focusRack': {
-      const grp = rackGroups[d.rackId];
-      if (grp) {
-        const wp = new THREE.Vector3();
-        grp.getWorldPosition(wp);
-        const rW = grp.userData.rW || 4;
-        const rH = grp.userData.rH || 3;
-        camTargetPos  = new THREE.Vector3(wp.x + rW / 2, rH * 0.6 + 2, wp.z + rW * 0.8 + 6);
-        camTargetLook = new THREE.Vector3(wp.x + rW / 2, rH / 2, wp.z);
-      }
-      break;
+  if (d.type === 'setRacks')       { rebuildScene(d.racks || []); }
+  else if (d.type === 'highlightCell') { highlightCell(d.rackId, d.floor, d.col); }
+  else if (d.type === 'clearHighlight') { clearHighlight(); }
+  else if (d.type === 'focusRack') {
+    var grp = rackGroups[d.rackId];
+    if (grp) {
+      var wp = new THREE.Vector3();
+      grp.getWorldPosition(wp);
+      var rW = grp.userData.rW || 4, rH = grp.userData.rH || 3;
+      camTargetPos  = new THREE.Vector3(wp.x + rW / 2, rH * 0.6 + 2, wp.z + rW * 0.8 + 6);
+      camTargetLook = new THREE.Vector3(wp.x + rW / 2, rH / 2, wp.z);
     }
-    case 'ping':
-      postUp({ type: 'rackViewerReady' });
-      break;
   }
+  else if (d.type === 'ping') { postUp({ type: 'rackViewerReady' }); }
 });
 
-// ── Animation loop ────────────────────────────────────────────
+// ── Animation loop ──────────────────────────────────────────────
 function animate() {
   requestAnimationFrame(animate);
-
-  // Camera lerp
   if (camTargetPos) {
     camera.position.lerp(camTargetPos, CAM_SPEED);
     controls.target.lerp(camTargetLook, CAM_SPEED);
   }
   controls.update();
-
-  // Highlight pulse
   if (highlighted) {
     highlightT += 0.045;
-    const p = Math.sin(highlightT * 3.2) * 0.5 + 0.5;
+    var p = Math.sin(highlightT * 3.2) * 0.5 + 0.5;
     highlighted.mesh.material.emissiveIntensity = 0.3 + p * 1.2;
     highlighted.mesh.scale.setScalar(1 + p * 0.035);
   }
-
   renderer.render(scene, camera);
 }
 
-// ── Resize ────────────────────────────────────────────────────
-window.addEventListener('resize', () => {
-  const w = window.innerWidth, h = window.innerHeight;
+// ── Resize ──────────────────────────────────────────────────────
+window.addEventListener('resize', function() {
+  var w = window.innerWidth, h = window.innerHeight;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
 });
 
-// ── Init complete ─────────────────────────────────────────────
+// ── Init complete ───────────────────────────────────────────────
 progress(100);
-setTimeout(() => {
-  const loadEl = document.getElementById('loading');
-  if (loadEl) { loadEl.style.opacity = '0'; loadEl.style.transition = 'opacity .4s'; setTimeout(() => loadEl.remove(), 400); }
+setTimeout(function() {
+  var loadEl = document.getElementById('loading');
+  if (loadEl) {
+    loadEl.style.opacity = '0';
+    loadEl.style.transition = 'opacity .4s';
+    setTimeout(function() { if (loadEl.parentNode) loadEl.parentNode.removeChild(loadEl); }, 400);
+  }
   animate();
   postUp({ type: 'rackViewerReady' });
 }, 300);
 
-} catch(initErr) {
-  const lt = document.getElementById('loading-text');
-  if (lt) { lt.textContent = '초기화 오류: ' + initErr.message; lt.style.color = '#ef4444'; }
-  console.error('[rack-viewer] init error:', initErr);
-}
+})();
 </script>
 </body>
 </html>
