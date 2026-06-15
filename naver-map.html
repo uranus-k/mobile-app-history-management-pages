@@ -60,9 +60,14 @@
 
 <script>
 var ZONE_COLORS = ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#14B8A6','#F97316'];
-var map, zones = [], activeZoneId = null, drawMode = false, drawStart = null, drawBound = false;
+var map, zones = [], activeZoneId = null, drawMode = false;
 var ps, geocoder;
-var _parentPinged = false; // ping이 map 초기화 전에 왔을 때 플래그
+var _parentPinged = false;
+
+// ── 폴리곤 드로잉 상태 ───────────────────────────────
+var polyPts    = [];   // 클릭으로 쌓인 꼭짓점 [{x%,y%}, ...]
+var previewPt  = null; // 마우스 현재 위치 (미확정 꼭짓점)
+var CLOSE_DIST = 18;   // 첫 꼭짓점 근접 판정 (px)
 
 function setDbg(msg) {
   var el = document.getElementById('dbg');
@@ -217,104 +222,270 @@ window.addEventListener('message', function(e) {
   }
 });
 
+// ── 구역 렌더링 (SVG 폴리곤, 구형 boxCoords 호환) ──────────────
+function _zoneToPoints(z) {
+  // 신형: polygonPoints JSON 배열
+  if (z.polygonPoints) {
+    try { var p = JSON.parse(z.polygonPoints); if (Array.isArray(p) && p.length >= 3) return p; } catch(e) {}
+  }
+  // 구형: boxCoords {left,top,width,height} → 사각형 4점으로 변환
+  if (z.boxCoords) {
+    try {
+      var c = JSON.parse(z.boxCoords);
+      if (c.left != null) return [
+        {x: c.left,           y: c.top           },
+        {x: c.left + c.width, y: c.top           },
+        {x: c.left + c.width, y: c.top + c.height},
+        {x: c.left,           y: c.top + c.height}
+      ];
+    } catch(e) {}
+  }
+  return null;
+}
+
+function _centroid(pts) {
+  var sx = 0, sy = 0;
+  pts.forEach(function(p) { sx += p.x; sy += p.y; });
+  return { x: sx / pts.length, y: sy / pts.length };
+}
+
 function renderZones() {
   var ol = document.getElementById('overlay');
   ol.innerHTML = '';
+
+  // SVG: viewBox 0 0 100 100 → % 좌표 그대로 사용
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible';
+
   zones.forEach(function(z, i) {
-    if (!z.boxCoords) return;
-    var c; try { c = JSON.parse(z.boxCoords); } catch(e) { return; }
-    if (c.left == null) return;
+    var pts = _zoneToPoints(z);
+    if (!pts || pts.length < 3) return;
     var isAct = activeZoneId === z.zoneId;
     var color = ZONE_COLORS[i % ZONE_COLORS.length];
     var cnt   = z.itemCount || 0;
-    var box   = document.createElement('div');
-    box.style.cssText = 'position:absolute;box-sizing:border-box;border-radius:4px;pointer-events:auto;cursor:pointer;'
-      + 'left:' + c.left + '%;top:' + c.top + '%;width:' + c.width + '%;height:' + c.height + '%;'
-      + 'background:' + color + (isAct ? '55' : '30') + ';'
-      + 'border:' + (isAct ? '2.5px' : '1.5px') + ' solid ' + color + ';';
-    box.innerHTML = '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
-      + 'justify-content:center;font-size:clamp(9px,1.8vw,14px);font-weight:800;color:#fff;'
-      + 'text-shadow:0 1px 5px rgba(0,0,0,.9);text-align:center;padding:2px;line-height:1.3">'
+
+    // 폴리곤
+    var pointsStr = pts.map(function(p) { return p.x + ' ' + p.y; }).join(' ');
+    var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', pointsStr);
+    poly.setAttribute('fill',           color + (isAct ? '55' : '28'));
+    poly.setAttribute('stroke',         color);
+    poly.setAttribute('stroke-width',   isAct ? '0.7' : '0.4');
+    poly.setAttribute('stroke-linejoin','round');
+    poly.style.cssText = 'pointer-events:auto;cursor:pointer';
+    poly.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      postUp({ type: 'zoneClick', zoneId: z.zoneId });
+    });
+    svg.appendChild(poly);
+
+    // 꼭짓점 점 (확대 시 가이드용)
+    pts.forEach(function(p) {
+      var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+      dot.setAttribute('r', '0.6');
+      dot.setAttribute('fill', color); dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '0.25');
+      dot.style.pointerEvents = 'none';
+      svg.appendChild(dot);
+    });
+
+    // 라벨
+    var cen = _centroid(pts);
+    var fo  = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+    fo.setAttribute('x', cen.x - 12); fo.setAttribute('y', cen.y - 5);
+    fo.setAttribute('width', '24'); fo.setAttribute('height', '10');
+    fo.style.pointerEvents = 'none';
+    fo.style.overflow = 'visible';
+    fo.innerHTML = '<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;flex-direction:column;align-items:center;justify-content:center;'
+      + 'font-size:1.5px;font-weight:800;color:#fff;text-shadow:0 0.3px 1.5px rgba(0,0,0,.9);text-align:center;white-space:nowrap">'
       + (z.zoneName || z.zoneId)
-      + (cnt ? '<div style="font-size:9px;opacity:.9;margin-top:1px">' + cnt + '건</div>' : '') + '</div>';
-    box.onclick = function(ev) { ev.stopPropagation(); postUp({ type: 'zoneClick', zoneId: z.zoneId }); };
-    ol.appendChild(box);
+      + (cnt ? '<span style="font-size:1.1px;opacity:.9">' + cnt + '건</span>' : '')
+      + '</div>';
+    svg.appendChild(fo);
   });
+  ol.appendChild(svg);
 }
 
+// ── 폴리곤 드로잉 ───────────────────────────────────────────────
 function setDrawMode(on) {
   drawMode = on;
+  polyPts   = [];
+  previewPt = null;
   var canvas = document.getElementById('draw-canvas');
   var banner = document.getElementById('draw-banner');
   if (on) {
     if (map) { map.setDraggable(false); map.setZoomable(false); }
     sizeContainers();
-    canvas.style.display = 'block';
+    canvas.style.display      = 'block';
     canvas.style.pointerEvents = 'auto';
-    canvas.style.cursor = 'crosshair';
-    if (banner) banner.style.display = 'block';
-    if (!drawBound) {
-      drawBound = true;
-      canvas.addEventListener('mousedown', onDown);
-      canvas.addEventListener('mousemove', onMove);
-      canvas.addEventListener('mouseup',   onUp);
-      canvas.addEventListener('mouseleave', function() { drawStart = null; clearCanvas(); });
-      canvas.addEventListener('touchstart', function(e){ e.preventDefault(); var t=e.touches[0]; onDown({clientX:t.clientX,clientY:t.clientY}); },{passive:false});
-      canvas.addEventListener('touchmove',  function(e){ e.preventDefault(); var t=e.touches[0]; onMove({clientX:t.clientX,clientY:t.clientY}); },{passive:false});
-      canvas.addEventListener('touchend',   function(e){ e.preventDefault(); onUp({}); },{passive:false});
-    }
+    canvas.style.cursor        = 'crosshair';
+    if (banner) { banner.textContent = '✦ 클릭으로 꼭짓점 추가 | 첫 점 클릭 또는 Enter로 완료 | ESC 취소'; banner.style.display = 'block'; }
+    bindPolyEvents(canvas);
   } else {
     if (map) { map.setDraggable(true); map.setZoomable(true); }
-    canvas.style.display = 'none';
+    canvas.style.display       = 'none';
     canvas.style.pointerEvents = 'none';
     if (banner) banner.style.display = 'none';
     clearCanvas();
+    polyPts = []; previewPt = null;
   }
 }
 
-function onDown(e) {
-  var r = document.getElementById('draw-canvas').getBoundingClientRect();
-  drawStart = { x: e.clientX - r.left, y: e.clientY - r.top };
+function bindPolyEvents(canvas) {
+  // 중복 바인딩 방지
+  if (canvas._polyBound) return;
+  canvas._polyBound = true;
+
+  canvas.addEventListener('mousemove', function(e) {
+    previewPt = canvasPct(canvas, e);
+    redrawPoly(canvas);
+  });
+
+  canvas.addEventListener('click', function(e) {
+    if (!drawMode) return;
+    var pt = canvasPct(canvas, e);
+    // 첫 꼭짓점 근접 → 폴리곤 완성
+    if (polyPts.length >= 3 && isNearFirst(canvas, e)) {
+      finishPoly();
+      return;
+    }
+    polyPts.push(pt);
+    redrawPoly(canvas);
+  });
+
+  canvas.addEventListener('dblclick', function(e) {
+    if (polyPts.length >= 3) finishPoly();
+  });
+
+  // 터치 지원
+  canvas.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    var t = e.touches[0];
+    var pt = canvasPct(canvas, t);
+    if (polyPts.length >= 3 && isNearFirst(canvas, t)) { finishPoly(); return; }
+    polyPts.push(pt);
+    redrawPoly(canvas);
+  }, { passive: false });
+
+  document.addEventListener('keydown', function(e) {
+    if (!drawMode) return;
+    if (e.key === 'Enter' && polyPts.length >= 3) { finishPoly(); }
+    if (e.key === 'Escape') { cancelPoly(); }
+    if (e.key === 'Backspace' && polyPts.length) {
+      polyPts.pop();
+      redrawPoly(document.getElementById('draw-canvas'));
+    }
+  });
 }
-function onMove(e) {
-  if (!drawStart) return;
-  var canvas = document.getElementById('draw-canvas'), ctx = canvas.getContext('2d');
+
+function canvasPct(canvas, e) {
   var r = canvas.getBoundingClientRect();
-  var cx = e.clientX - r.left, cy = e.clientY - r.top;
-  var x = Math.min(drawStart.x, cx), y = Math.min(drawStart.y, cy);
-  var w = Math.abs(cx - drawStart.x), h = Math.abs(cy - drawStart.y);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(59,130,246,0.2)';
-  ctx.strokeStyle = '#3B82F6';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 3]);
-  ctx.fillRect(x, y, w, h);
-  ctx.strokeRect(x, y, w, h);
-  ctx.setLineDash([]);
-}
-function onUp(e) {
-  if (!drawStart) return;
-  var canvas = document.getElementById('draw-canvas'), r = canvas.getBoundingClientRect();
-  var ex = e.clientX !== undefined ? e.clientX - r.left : drawStart.x;
-  var ey = e.clientY !== undefined ? e.clientY - r.top  : drawStart.y;
-  var bx = Math.min(drawStart.x, ex), by = Math.min(drawStart.y, ey);
-  var bw = Math.abs(ex - drawStart.x), bh = Math.abs(ey - drawStart.y);
-  drawStart = null;
-  if (bw < 15 || bh < 15) { clearCanvas(); return; }
-  var pct = {
-    left:   +(bx / canvas.width  * 100).toFixed(2),
-    top:    +(by / canvas.height * 100).toFixed(2),
-    width:  +(bw / canvas.width  * 100).toFixed(2),
-    height: +(bh / canvas.height * 100).toFixed(2)
+  return {
+    x: +((e.clientX - r.left) / r.width  * 100).toFixed(2),
+    y: +((e.clientY - r.top)  / r.height * 100).toFixed(2)
   };
-  var center = map.getCenter();
-  postUp({ type: 'zoneDrawn', boxCoords: JSON.stringify(pct),
-           mapLat: center.getLat(), mapLng: center.getLng(), mapZoom: map.getLevel() });
-  clearCanvas();
 }
+
+function isNearFirst(canvas, e) {
+  if (!polyPts.length) return false;
+  var r = canvas.getBoundingClientRect();
+  var fx = polyPts[0].x / 100 * r.width  + r.left;
+  var fy = polyPts[0].y / 100 * r.height + r.top;
+  var dx = e.clientX - fx, dy = e.clientY - fy;
+  return Math.sqrt(dx*dx + dy*dy) <= CLOSE_DIST;
+}
+
+function redrawPoly(canvas) {
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!polyPts.length) return;
+
+  var toX = function(p) { return p.x / 100 * W; };
+  var toY = function(p) { return p.y / 100 * H; };
+
+  // 채우기 (3점 이상)
+  if (polyPts.length >= 2) {
+    ctx.beginPath();
+    ctx.moveTo(toX(polyPts[0]), toY(polyPts[0]));
+    for (var i = 1; i < polyPts.length; i++) ctx.lineTo(toX(polyPts[i]), toY(polyPts[i]));
+    if (previewPt) ctx.lineTo(toX(previewPt), toY(previewPt));
+    if (polyPts.length >= 3) {
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(59,130,246,0.18)';
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#3B82F6';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.stroke();
+  }
+
+  // 프리뷰 점선
+  if (previewPt && polyPts.length >= 1) {
+    var last = polyPts[polyPts.length - 1];
+    ctx.beginPath();
+    ctx.moveTo(toX(last), toY(last));
+    ctx.lineTo(toX(previewPt), toY(previewPt));
+    ctx.strokeStyle = 'rgba(59,130,246,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 꼭짓점 점
+  polyPts.forEach(function(p, idx) {
+    var nearFirst = idx === 0 && polyPts.length >= 3 && previewPt && isNearFirst(canvas, { clientX: toX(previewPt) + canvas.getBoundingClientRect().left, clientY: toY(previewPt) + canvas.getBoundingClientRect().top });
+    ctx.beginPath();
+    ctx.arc(toX(p), toY(p), idx === 0 ? 7 : 5, 0, Math.PI * 2);
+    ctx.fillStyle = idx === 0 ? (nearFirst ? '#10B981' : '#F59E0B') : '#3B82F6';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+
+  // 첫 점 근접 가이드 원
+  if (polyPts.length >= 3) {
+    ctx.beginPath();
+    ctx.arc(toX(polyPts[0]), toY(polyPts[0]), CLOSE_DIST, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(16,185,129,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function finishPoly() {
+  if (polyPts.length < 3) return;
+  var center = map.getCenter();
+  postUp({
+    type:           'zoneDrawn',
+    polygonPoints:  JSON.stringify(polyPts),
+    mapLat:         center.getLat(),
+    mapLng:         center.getLng(),
+    mapZoom:        map.getLevel()
+  });
+  polyPts = []; previewPt = null;
+  clearCanvas();
+  setDrawMode(false);
+  postUp({ type: 'drawModeOff' }); // 부모 버튼 상태 복구
+}
+
+function cancelPoly() {
+  polyPts = []; previewPt = null;
+  clearCanvas();
+  setDrawMode(false);
+  postUp({ type: 'drawModeOff' });
+}
+
 function clearCanvas() {
   var c = document.getElementById('draw-canvas');
-  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
 
 // ── 시작 ─────────────────────────────────────────────
