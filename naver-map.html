@@ -61,6 +61,7 @@
 <script>
 var ZONE_COLORS = ['#EF4444','#F59E0B','#10B981','#3B82F6','#8B5CF6','#EC4899','#14B8A6','#F97316'];
 var map, zones = [], activeZoneId = null, drawMode = false;
+var palletMarker = null; // { zoneId, rackLabel }
 var ps, geocoder;
 var _parentPinged = false;
 
@@ -211,6 +212,11 @@ window.addEventListener('message', function(e) {
     case 'setDrawMode': setDrawMode(d.enabled); break;
     case 'filterZone':  activeZoneId = d.zoneId; renderZones(); break;
     case 'clearFilter': activeZoneId = null; renderZones(); break;
+    case 'showPalletMarker':
+      palletMarker = { zoneId: d.zoneId, rackLabel: d.rackLabel || null };
+      renderZones(); break;
+    case 'clearPalletMarker':
+      palletMarker = null; renderZones(); break;
     case 'ping':
       if (map) { postUp({ type: 'mapReady' }); }
       else { _parentPinged = true; } // map 준비 전 ping → 초기화 완료 시 응답
@@ -305,7 +311,93 @@ function renderZones() {
       + '</div>';
     svg.appendChild(fo);
   });
+
+  // ── 팔레트 마커 (꺽쇠 지시선) ──────────────────────────────────
+  if (palletMarker) {
+    var mz = zones.find(function(z) { return z.zoneId === palletMarker.zoneId; });
+    if (mz) {
+      var mpts = _zoneToPoints(mz);
+      if (mpts && mpts.length) {
+        var mc = _centroid(mpts);
+        _renderPalletPin(svg, mc.x, mc.y, palletMarker.rackLabel);
+      }
+    }
+  }
+
   ol.appendChild(svg);
+}
+
+function _renderPalletPin(svg, cx, cy, rackLabel) {
+  var NS = 'http://www.w3.org/2000/svg';
+
+  // 맥동 링
+  var ring = document.createElementNS(NS, 'circle');
+  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', '3');
+  ring.setAttribute('fill', 'none'); ring.setAttribute('stroke', '#EF4444'); ring.setAttribute('stroke-width', '0.35');
+  var aR = document.createElementNS(NS, 'animate');
+  aR.setAttribute('attributeName','r'); aR.setAttribute('from','3'); aR.setAttribute('to','9');
+  aR.setAttribute('dur','1.8s'); aR.setAttribute('repeatCount','indefinite');
+  var aO = document.createElementNS(NS, 'animate');
+  aO.setAttribute('attributeName','opacity'); aO.setAttribute('from','0.8'); aO.setAttribute('to','0');
+  aO.setAttribute('dur','1.8s'); aO.setAttribute('repeatCount','indefinite');
+  ring.appendChild(aR); ring.appendChild(aO);
+  svg.appendChild(ring);
+
+  // 꺽쇠 지시선 (∨ 형태, 아래쪽 꼭짓점이 centroid)
+  function mkLine(x1,y1,x2,y2) {
+    var ln = document.createElementNS(NS, 'line');
+    ln.setAttribute('x1',x1); ln.setAttribute('y1',y1);
+    ln.setAttribute('x2',x2); ln.setAttribute('y2',y2);
+    ln.setAttribute('stroke','#EF4444'); ln.setAttribute('stroke-width','0.9');
+    ln.setAttribute('stroke-linecap','round');
+    svg.appendChild(ln);
+  }
+  mkLine(cx-3, cy-5, cx, cy-1.5);   // 왼쪽 선
+  mkLine(cx+3, cy-5, cx, cy-1.5);   // 오른쪽 선
+  mkLine(cx-1.2, cy-3.5, cx, cy-1.5); // 왼쪽 세부 꺽쇠
+  mkLine(cx+1.2, cy-3.5, cx, cy-1.5); // 오른쪽 세부 꺽쇠
+
+  // 중심 점
+  var dot = document.createElementNS(NS, 'circle');
+  dot.setAttribute('cx',cx); dot.setAttribute('cy',cy); dot.setAttribute('r','1.5');
+  dot.setAttribute('fill','#EF4444');
+  var aP = document.createElementNS(NS, 'animate');
+  aP.setAttribute('attributeName','r'); aP.setAttribute('values','1.5;2.2;1.5');
+  aP.setAttribute('dur','1.2s'); aP.setAttribute('repeatCount','indefinite');
+  dot.appendChild(aP);
+  svg.appendChild(dot);
+
+  // 메인 배지
+  var bW = rackLabel ? 26 : 18;
+  var rect1 = document.createElementNS(NS, 'rect');
+  rect1.setAttribute('x', cx - bW/2); rect1.setAttribute('y', cy - 12);
+  rect1.setAttribute('width', bW); rect1.setAttribute('height', 5.2);
+  rect1.setAttribute('rx','1.2'); rect1.setAttribute('fill','#EF4444'); rect1.setAttribute('opacity','0.95');
+  svg.appendChild(rect1);
+
+  var t1 = document.createElementNS(NS, 'text');
+  t1.setAttribute('x', cx); t1.setAttribute('y', cy - 8.5);
+  t1.setAttribute('font-size','2'); t1.setAttribute('font-weight','bold');
+  t1.setAttribute('fill','#fff'); t1.setAttribute('text-anchor','middle');
+  t1.textContent = '▼ 팔레트 위치';
+  svg.appendChild(t1);
+
+  // RACK 정보 배지 (있을 때)
+  if (rackLabel) {
+    var rect2 = document.createElementNS(NS, 'rect');
+    rect2.setAttribute('x', cx - bW/2); rect2.setAttribute('y', cy - 6.5);
+    rect2.setAttribute('width', bW); rect2.setAttribute('height', 4.2);
+    rect2.setAttribute('rx','1'); rect2.setAttribute('fill','#1e293b'); rect2.setAttribute('opacity','0.92');
+    rect2.setAttribute('stroke','#EF4444'); rect2.setAttribute('stroke-width','0.2');
+    svg.appendChild(rect2);
+
+    var t2 = document.createElementNS(NS, 'text');
+    t2.setAttribute('x', cx); t2.setAttribute('y', cy - 3.8);
+    t2.setAttribute('font-size','1.5'); t2.setAttribute('fill','#94a3b8');
+    t2.setAttribute('text-anchor','middle');
+    t2.textContent = rackLabel;
+    svg.appendChild(t2);
+  }
 }
 
 // ── 폴리곤 드로잉 ───────────────────────────────────────────────
