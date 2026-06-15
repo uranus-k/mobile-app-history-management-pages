@@ -111,6 +111,11 @@ function initMap() {
       if (e.key === 'Enter') doSearch();
     });
 
+    // 지도 이동/줌 시 SVG 오버레이 재렌더링 (GPS 좌표 → 화면 % 재계산)
+    kakao.maps.event.addListener(map, 'bounds_changed', function() {
+      renderZones();
+    });
+
     postUp({ type: 'mapReady' });
     _parentPinged = false;
     setDbg('✓ mapReady 전송 완료');
@@ -217,6 +222,12 @@ window.addEventListener('message', function(e) {
       renderZones(); break;
     case 'clearPalletMarker':
       palletMarker = null; renderZones(); break;
+    case 'getMapCenter':
+      if (map) {
+        var c = map.getCenter();
+        postUp({ type: 'mapCenter', lat: c.getLat(), lng: c.getLng(), zoom: map.getLevel() });
+      }
+      break;
     case 'ping':
       if (map) { postUp({ type: 'mapReady' }); }
       else { _parentPinged = true; } // map 준비 전 ping → 초기화 완료 시 응답
@@ -228,11 +239,34 @@ window.addEventListener('message', function(e) {
   }
 });
 
+// GPS 배열 [{lat,lng}] → 현재 지도 뷰 기준 % 좌표 [{x,y}]
+function gpsArrToPercent(pts) {
+  if (!map) return [];
+  var bounds = map.getBounds();
+  var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  return pts.map(function(p) {
+    return {
+      x: +((p.lng - sw.getLng()) / (ne.getLng() - sw.getLng()) * 100).toFixed(2),
+      y: +((ne.getLat() - p.lat) / (ne.getLat() - sw.getLat()) * 100).toFixed(2)
+    };
+  });
+}
+
 // ── 구역 렌더링 (SVG 폴리곤, 구형 boxCoords 호환) ──────────────
 function _zoneToPoints(z) {
   // 신형: polygonPoints JSON 배열
   if (z.polygonPoints) {
-    try { var p = JSON.parse(z.polygonPoints); if (Array.isArray(p) && p.length >= 3) return p; } catch(e) {}
+    try {
+      var p = JSON.parse(z.polygonPoints);
+      if (Array.isArray(p) && p.length >= 3) {
+        // GPS 형식 ({lat,lng}) → 현재 지도 뷰 기준 % 변환
+        if (p[0].lat !== undefined) {
+          return gpsArrToPercent(p);
+        }
+        // 구형 screen % 형식 ({x,y}) — 그대로 반환
+        return p;
+      }
+    } catch(e) {}
   }
   // 구형: boxCoords {left,top,width,height} → 사각형 4점으로 변환
   if (z.boxCoords) {
@@ -473,20 +507,27 @@ function bindPolyEvents(canvas) {
 }
 
 function canvasPct(canvas, e) {
-  var r = canvas.getBoundingClientRect();
-  return {
-    x: +((e.clientX - r.left) / r.width  * 100).toFixed(2),
-    y: +((e.clientY - r.top)  / r.height * 100).toFixed(2)
-  };
+  var r   = canvas.getBoundingClientRect();
+  var px  = e.clientX - r.left;
+  var py  = e.clientY - r.top;
+  var bounds = map.getBounds();
+  var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  var lat = ne.getLat() - (py / r.height) * (ne.getLat() - sw.getLat());
+  var lng = sw.getLng() + (px / r.width)  * (ne.getLng() - sw.getLng());
+  return { lat: +lat.toFixed(6), lng: +lng.toFixed(6) };
 }
 
 function isNearFirst(canvas, e) {
   if (!polyPts.length) return false;
-  var r = canvas.getBoundingClientRect();
-  var fx = polyPts[0].x / 100 * r.width  + r.left;
-  var fy = polyPts[0].y / 100 * r.height + r.top;
-  var dx = e.clientX - fx, dy = e.clientY - fy;
-  return Math.sqrt(dx*dx + dy*dy) <= CLOSE_DIST;
+  var r  = canvas.getBoundingClientRect();
+  var cur = canvasPct(canvas, e);
+  var first = polyPts[0];
+  // 화면에서 20px 이내인지 GPS 역변환으로 체크
+  var bounds = map.getBounds();
+  var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  var dx = (cur.lng - first.lng) / (ne.getLng() - sw.getLng()) * r.width;
+  var dy = (cur.lat - first.lat) / (ne.getLat() - sw.getLat()) * r.height;
+  return Math.sqrt(dx*dx + dy*dy) < CLOSE_DIST;
 }
 
 function redrawPoly(canvas) {
@@ -495,8 +536,16 @@ function redrawPoly(canvas) {
   ctx.clearRect(0, 0, W, H);
   if (!polyPts.length) return;
 
-  var toX = function(p) { return p.x / 100 * W; };
-  var toY = function(p) { return p.y / 100 * H; };
+  var bounds = map.getBounds();
+  var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  var toX = function(p) {
+    if (p.lat !== undefined) return (p.lng - sw.getLng()) / (ne.getLng() - sw.getLng()) * W;
+    return p.x / 100 * W;
+  };
+  var toY = function(p) {
+    if (p.lat !== undefined) return (ne.getLat() - p.lat) / (ne.getLat() - sw.getLat()) * H;
+    return p.y / 100 * H;
+  };
 
   // 채우기 (3점 이상)
   if (polyPts.length >= 2) {
