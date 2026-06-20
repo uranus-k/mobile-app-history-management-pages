@@ -278,23 +278,41 @@
     viewPolygons = [];
     if (!zones || !zones.length) return;
     var bounds = new kakao.maps.LatLngBounds();
+    var zoneBounds = new kakao.maps.LatLngBounds(); // 야드 제외한 구역 범위
+    var hasZones = false;
     zones.forEach(function(zone) {
       if (!zone.vertices || zone.vertices.length < 3) return;
       var path = zone.vertices.map(function(v) {
         var latlng = new kakao.maps.LatLng(v.lat, v.lng);
         bounds.extend(latlng);
+        if (!zone.isYard) { zoneBounds.extend(latlng); hasZones = true; }
         return latlng;
       });
       var color = zone.color || '#3B82F6';
+      if (zone.isYard) {
+        // 전체 적치장 경계 — 회색 점선, 클릭 불가
+        var yardPoly = new kakao.maps.Polygon({
+          map: map,
+          path: path,
+          strokeWeight: 3,
+          strokeColor: '#6B7280',
+          strokeOpacity: 0.85,
+          strokeStyle: 'dashed',
+          fillColor: '#6B7280',
+          fillOpacity: 0.03
+        });
+        viewPolygons.push(yardPoly);
+        return;
+      }
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
-        strokeWeight: 2,
+        strokeWeight: 2.5,
         strokeColor: color,
         strokeOpacity: 0.95,
         strokeStyle: 'dashed',
         fillColor: color,
-        fillOpacity: 0.04
+        fillOpacity: 0.06
       });
       kakao.maps.event.addListener(poly, 'click', function() {
         window.parent.postMessage({ type: 'VIEW_ZONE_CLICK', zoneId: zone.zoneId }, originForPost);
@@ -314,7 +332,11 @@
       });
       viewPolygons.push(label);
     });
-    try { map.setBounds(bounds, 40); } catch(e) {}
+    // 구역이 있으면 구역 기준으로, 없으면 전체 bounds로 지도 맞춤
+    try {
+      if (hasZones) { map.setBounds(zoneBounds, 60); }
+      else { map.setBounds(bounds, 40); }
+    } catch(e) {}
   }
 
   window.addEventListener('message', function(e) {
