@@ -20,8 +20,10 @@
       padding:5px 12px; color:#fff; border:none; border-radius:7px;
       font-size:12px; font-weight:800; cursor:pointer; font-family:inherit;
     }
-    #draw-done-btn { background:#16A34A; }
-    #draw-cancel-btn { background:#DC2626; }
+    #draw-done-btn    { background:#16A34A; }
+    #draw-cancel-btn  { background:#DC2626; }
+    #draw-confirm-btn { background:#059669; }
+    #draw-redo-btn    { background:#0F4C81; }
     #draw-count {
       position:absolute; right:10px; bottom:10px; z-index:10;
       display:none; padding:7px 10px; border-radius:10px;
@@ -35,9 +37,12 @@
 <body>
 <div id="map"></div>
 <div id="draw-toolbar">
-  <span><b>구역 지정</b> 지도에서 외곽 꼭짓점을 순서대로 클릭한 뒤 완료를 누르세요.</span>
-  <button id="draw-done-btn" class="draw-btn" onclick="finishDrawing()">그리기 완료</button>
-  <button id="draw-cancel-btn" class="draw-btn" onclick="cancelDrawing()">취소</button>
+  <span id="hint-draw"><b>구역 지정</b> 꼭짓점을 순서대로 클릭한 뒤 완료를 누르세요.</span>
+  <span id="hint-edit" style="display:none"><b>편집 모드</b> 꼭짓점을 드래그하여 조정하세요.</span>
+  <button id="draw-done-btn"    class="draw-btn" onclick="finishDrawing()">그리기 완료</button>
+  <button id="draw-cancel-btn"  class="draw-btn" onclick="cancelDrawing()">취소</button>
+  <button id="draw-confirm-btn" class="draw-btn" style="display:none" onclick="confirmPolygon()">✓ 확정 저장</button>
+  <button id="draw-redo-btn"    class="draw-btn" style="display:none" onclick="redoDrawing()">↺ 다시 그리기</button>
 </div>
 <div id="draw-count">꼭짓점 0개</div>
 
@@ -51,101 +56,185 @@
   var marker = null;
   var originForPost = '*';
   var drawingActive = false;
-  var drawMode = 'zone'; // 'yard' 또는 'zone'
+  var editingActive = false;
+  var drawMode = 'zone'; // 'yard' | 'zone'
   var yardPolygonGuide = null;
   var yardVerticesGuide = [];
+  // ── 뷰 모드 (배경 지도 전용) ──────────────────────────────
+  var viewPolygons = []; // 뷰 모드에서 그려진 다각형/라벨 오버레이
+  var viewPin = null;    // 뷰 모드 핀 마커
   var drawVertices = [];
-  var drawMarkers = [];
+  var drawMarkers = [];   // numbered CustomOverlay dots (draw mode)
+  var editMarkers = [];   // draggable Markers (edit mode)
   var drawPolyline = null;
-  var drawPolygon = null;
+  var drawPolygon  = null;
 
+  // ─── 레이아웃 헬퍼 ───────────────────────────────────────
+  function setDrawMode() {
+    document.getElementById('hint-draw').style.display  = 'inline';
+    document.getElementById('hint-edit').style.display  = 'none';
+    document.getElementById('draw-done-btn').style.display    = 'inline-block';
+    document.getElementById('draw-cancel-btn').style.display  = 'inline-block';
+    document.getElementById('draw-confirm-btn').style.display = 'none';
+    document.getElementById('draw-redo-btn').style.display    = 'none';
+  }
+  function setEditMode() {
+    document.getElementById('hint-draw').style.display  = 'none';
+    document.getElementById('hint-edit').style.display  = 'inline';
+    document.getElementById('draw-done-btn').style.display    = 'none';
+    document.getElementById('draw-cancel-btn').style.display  = 'none';
+    document.getElementById('draw-confirm-btn').style.display = 'inline-block';
+    document.getElementById('draw-redo-btn').style.display    = 'inline-block';
+  }
+
+  // ─── 폴리곤 내부 포인트 체크 ─────────────────────────────
   function isPointInPolygon(lat, lng, polygonVertices) {
     if (!polygonVertices || polygonVertices.length < 3) return true;
-    var x = lng, y = lat;
-    var inside = false;
+    var x = lng, y = lat, inside = false;
     for (var i = 0, j = polygonVertices.length - 1; i < polygonVertices.length; j = i++) {
       var xi = polygonVertices[i].lng, yi = polygonVertices[i].lat;
       var xj = polygonVertices[j].lng, yj = polygonVertices[j].lat;
-      
-      var intersect = ((yi > y) != (yj > y))
-          && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-      if (intersect) inside = !inside;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
     }
     return inside;
   }
 
+  // ─── 드로잉 시작 ─────────────────────────────────────────
   function startDrawMode(mode, yardVertices) {
     drawMode = mode || 'zone';
     drawingActive = true;
+    editingActive = false;
     clearDrawing();
+    clearEditMarkers();
 
-    if (yardPolygonGuide) {
-      yardPolygonGuide.setMap(null);
-      yardPolygonGuide = null;
-    }
+    if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = yardVertices || [];
     if (drawMode === 'zone' && yardVerticesGuide.length >= 3) {
       var path = yardVerticesGuide.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
       yardPolygonGuide = new kakao.maps.Polygon({
-        map: map,
-        path: path,
-        strokeWeight: 2,
-        strokeColor: '#D1D5DB',
-        strokeOpacity: 0.8,
-        strokeStyle: 'dash',
-        fillColor: '#6B7280',
-        fillOpacity: 0.15
+        map: map, path: path,
+        strokeWeight: 2, strokeColor: '#D1D5DB', strokeOpacity: 0.8, strokeStyle: 'dash',
+        fillColor: '#6B7280', fillOpacity: 0.15
       });
-      // 첫 꼭짓점으로 중심 이동
       map.setCenter(path[0]);
     }
 
+    setDrawMode();
     document.getElementById('draw-toolbar').classList.add('visible');
     document.getElementById('draw-count').classList.add('visible');
     updateDrawCount();
     setTimeout(function() { map.relayout(); }, 80);
   }
 
+  // ─── 그리기 완료 → 편집 모드 진입 ───────────────────────
   function finishDrawing() {
     if (!drawVertices || drawVertices.length < 3) {
-      alert('구역은 꼭짓점 3개 이상을 클릭해야 저장할 수 있습니다.');
+      alert('꼭짓점 3개 이상을 클릭해야 저장할 수 있습니다.');
       return;
     }
+    enterEditMode();
+  }
+
+  function enterEditMode() {
+    drawingActive = false;
+    editingActive = true;
+
+    // 번호 오버레이 제거
+    drawMarkers.forEach(function(m) { m.setMap(null); });
+    drawMarkers = [];
+    if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
+    if (drawPolygon)  { drawPolygon.setMap(null);  drawPolygon  = null; }
+
+    // 드래그 가능한 마커 생성
+    editMarkers = drawVertices.map(function(v, idx) {
+      var pos = new kakao.maps.LatLng(v.lat, v.lng);
+      var m = new kakao.maps.Marker({
+        position: pos,
+        map: map,
+        draggable: true,
+        zIndex: 5,
+        title: (idx + 1) + '번 꼭짓점'
+      });
+      kakao.maps.event.addListener(m, 'drag', redrawEditPolygon);
+      return m;
+    });
+
+    redrawEditPolygon();
+    setEditMode();
+    document.getElementById('draw-count').textContent =
+      '꼭짓점 ' + editMarkers.length + '개 — 드래그하여 조정';
+  }
+
+  function redrawEditPolygon() {
+    var path = editMarkers.map(function(m) { return m.getPosition(); });
+    if (drawPolygon) { drawPolygon.setMap(null); drawPolygon = null; }
+    if (path.length >= 3) {
+      drawPolygon = new kakao.maps.Polygon({
+        map: map, path: path,
+        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95,
+        fillColor: '#F59E0B', fillOpacity: .22
+      });
+    }
+  }
+
+  // ─── 확정 저장 ───────────────────────────────────────────
+  function confirmPolygon() {
+    var vertices = editMarkers.map(function(m, idx) {
+      var p = m.getPosition();
+      return { seq: idx + 1, lat: p.getLat(), lng: p.getLng() };
+    });
+    if (vertices.length < 3) { alert('꼭짓점이 부족합니다.'); return; }
     var type = (drawMode === 'yard') ? 'KAKAO_YARD_DRAW_END' : 'KAKAO_ZONE_DRAW_END';
-    notifyParent({ type: type, data: drawVertices.slice() });
+    notifyParent({ type: type, data: vertices });
     cancelDrawing();
   }
 
+  // ─── 다시 그리기 ─────────────────────────────────────────
+  function redoDrawing() {
+    clearEditMarkers();
+    if (drawPolygon) { drawPolygon.setMap(null); drawPolygon = null; }
+    editingActive = false;
+    drawingActive = true;
+    drawVertices = [];
+    setDrawMode();
+    updateDrawCount();
+  }
+
+  // ─── 취소 (전체 초기화) ───────────────────────────────────
   function cancelDrawing() {
     drawingActive = false;
+    editingActive = false;
+    clearEditMarkers();
     clearDrawing();
-    if (yardPolygonGuide) {
-      yardPolygonGuide.setMap(null);
-      yardPolygonGuide = null;
-    }
+    if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = [];
+    setDrawMode();
     document.getElementById('draw-toolbar').classList.remove('visible');
     document.getElementById('draw-count').classList.remove('visible');
   }
 
+  // ─── 편집 마커 제거 ──────────────────────────────────────
+  function clearEditMarkers() {
+    editMarkers.forEach(function(m) { m.setMap(null); });
+    editMarkers = [];
+  }
+
+  // ─── 드로잉 상태 초기화 ──────────────────────────────────
   function clearDrawing() {
     drawVertices = [];
     drawMarkers.forEach(function(m) { m.setMap(null); });
     drawMarkers = [];
-    if (drawPolyline) drawPolyline.setMap(null);
-    if (drawPolygon) drawPolygon.setMap(null);
-    drawPolyline = null;
-    drawPolygon = null;
+    if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
+    if (drawPolygon)  { drawPolygon.setMap(null);  drawPolygon  = null; }
     updateDrawCount();
   }
 
+  // ─── 꼭짓점 추가 (드로잉 모드) ───────────────────────────
   function addDrawVertex(latlng) {
     var seq = drawVertices.length + 1;
     drawVertices.push({ seq: seq, lat: latlng.getLat(), lng: latlng.getLng() });
     var dot = new kakao.maps.CustomOverlay({
-      position: latlng,
-      yAnchor: .5,
-      xAnchor: .5,
+      position: latlng, yAnchor: .5, xAnchor: .5,
       content: '<div style="width:20px;height:20px;border-radius:999px;background:#F59E0B;border:2px solid #fff;color:#111827;font-size:10px;font-weight:900;line-height:16px;text-align:center;box-shadow:0 3px 10px rgba(0,0,0,.3)">' + seq + '</div>'
     });
     dot.setMap(map);
@@ -157,26 +246,18 @@
   function redrawShape() {
     var path = drawVertices.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
     if (drawPolyline) drawPolyline.setMap(null);
-    if (drawPolygon) drawPolygon.setMap(null);
+    if (drawPolygon)  drawPolygon.setMap(null);
     if (path.length >= 2) {
       drawPolyline = new kakao.maps.Polyline({
-        map: map,
-        path: path,
-        strokeWeight: 3,
-        strokeColor: '#F59E0B',
-        strokeOpacity: .95,
-        strokeStyle: 'solid'
+        map: map, path: path,
+        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95, strokeStyle: 'solid'
       });
     }
     if (path.length >= 3) {
       drawPolygon = new kakao.maps.Polygon({
-        map: map,
-        path: path,
-        strokeWeight: 3,
-        strokeColor: '#F59E0B',
-        strokeOpacity: .95,
-        fillColor: '#F59E0B',
-        fillOpacity: .22
+        map: map, path: path,
+        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95,
+        fillColor: '#F59E0B', fillOpacity: .22
       });
     }
   }
@@ -188,6 +269,52 @@
 
   function notifyParent(data) {
     window.parent.postMessage(data, originForPost || '*');
+  }
+
+  // ─── 부모 메시지 수신 ─────────────────────────────────────
+  // ─── 뷰 모드 — 구역 폴리곤 그리기 (점선, 채우기 없음) ────
+  function renderViewZones(zones) {
+    viewPolygons.forEach(function(o) { o.setMap(null); });
+    viewPolygons = [];
+    if (!zones || !zones.length) return;
+    var bounds = new kakao.maps.LatLngBounds();
+    zones.forEach(function(zone) {
+      if (!zone.vertices || zone.vertices.length < 3) return;
+      var path = zone.vertices.map(function(v) {
+        var latlng = new kakao.maps.LatLng(v.lat, v.lng);
+        bounds.extend(latlng);
+        return latlng;
+      });
+      var color = zone.color || '#3B82F6';
+      var poly = new kakao.maps.Polygon({
+        map: map,
+        path: path,
+        strokeWeight: 2,
+        strokeColor: color,
+        strokeOpacity: 0.95,
+        strokeStyle: 'dashed',
+        fillColor: color,
+        fillOpacity: 0.04
+      });
+      kakao.maps.event.addListener(poly, 'click', function() {
+        window.parent.postMessage({ type: 'VIEW_ZONE_CLICK', zoneId: zone.zoneId }, originForPost);
+      });
+      viewPolygons.push(poly);
+      // 구역 라벨
+      var cLat = 0, cLng = 0;
+      zone.vertices.forEach(function(v) { cLat += v.lat; cLng += v.lng; });
+      cLat /= zone.vertices.length; cLng /= zone.vertices.length;
+      var label = new kakao.maps.CustomOverlay({
+        map: map,
+        position: new kakao.maps.LatLng(cLat, cLng),
+        content: '<div style="background:rgba(255,255,255,.82);padding:2px 7px;border-radius:4px;'
+          + 'font-size:11px;font-weight:800;color:' + color + ';white-space:nowrap;'
+          + 'border:1px dashed ' + color + ';pointer-events:none">' + (zone.zoneName || zone.zoneId) + '</div>',
+        zIndex: 4
+      });
+      viewPolygons.push(label);
+    });
+    try { map.setBounds(bounds, 40); } catch(e) {}
   }
 
   window.addEventListener('message', function(e) {
@@ -203,14 +330,36 @@
       map.setCenter(pos);
       if (d.placeMarker) placeMarker(d.lat, d.lng);
       setTimeout(function() { map.relayout(); }, 40);
+    } else if (d.type === 'renderViewZones') {
+      renderViewZones(d.zones || []);
+    } else if (d.type === 'viewCenter') {
+      if (d.bbox) {
+        var sw = new kakao.maps.LatLng(d.bbox.minLat, d.bbox.minLng);
+        var ne = new kakao.maps.LatLng(d.bbox.maxLat, d.bbox.maxLng);
+        map.setBounds(new kakao.maps.LatLngBounds(sw, ne), 40);
+      } else if (d.lat && d.lng) {
+        map.setCenter(new kakao.maps.LatLng(d.lat, d.lng));
+        if (d.level) map.setLevel(d.level);
+      }
+    } else if (d.type === 'showViewPin') {
+      if (viewPin) { viewPin.setMap(null); viewPin = null; }
+      viewPin = new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(d.lat, d.lng)
+      });
+    } else if (d.type === 'clearViewPin') {
+      if (viewPin) { viewPin.setMap(null); viewPin = null; }
     }
   });
 
+  // ─── 지도 클릭 ───────────────────────────────────────────
   kakao.maps.event.addListener(map, 'click', function(mouseEvent) {
     var latlng = mouseEvent.latLng;
+
+    if (editingActive) return; // 편집 모드에서는 지도 클릭 무시
+
     if (drawingActive) {
-      var lat = latlng.getLat();
-      var lng = latlng.getLng();
+      var lat = latlng.getLat(), lng = latlng.getLng();
       if (drawMode === 'zone' && yardVerticesGuide.length >= 3) {
         if (!isPointInPolygon(lat, lng, yardVerticesGuide)) {
           alert('꼭짓점은 전체 적치장(Yard) 영역 내부에만 지정할 수 있습니다.');
@@ -220,8 +369,9 @@
       addDrawVertex(latlng);
       return;
     }
-    var lat = latlng.getLat();
-    var lng = latlng.getLng();
+
+    // 일반 모드 — 위치 마커
+    var lat = latlng.getLat(), lng = latlng.getLng();
     placeMarker(lat, lng);
     reverseGeocode(lat, lng);
     notifyParent({ type: 'coords', lat: lat, lng: lng });
@@ -248,13 +398,12 @@
   function reverseGeocode(lat, lng) {
     fetch('https://dapi.kakao.com/v2/local/geo/coord2address.json?x=' + lng + '&y=' + lat, {
       headers: { Authorization: 'KakaoAK ' + KAKAO_REST_KEY }
-    }).then(function(res) {
-      return res.json();
-    }).then(function(data) {
-      var doc = data.documents && data.documents[0];
-      var address = doc ? ((doc.road_address && doc.road_address.address_name) || (doc.address && doc.address.address_name) || '') : '';
-      if (address) notifyParent({ type: 'address', address: address, lat: lat, lng: lng });
-    }).catch(function() {});
+    }).then(function(r) { return r.json(); })
+      .then(function(data) {
+        var doc = data.documents && data.documents[0];
+        var addr = doc ? ((doc.road_address && doc.road_address.address_name) || (doc.address && doc.address.address_name) || '') : '';
+        if (addr) notifyParent({ type: 'address', address: addr, lat: lat, lng: lng });
+      }).catch(function() {});
   }
 </script>
 </body>
