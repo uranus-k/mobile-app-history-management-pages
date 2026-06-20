@@ -104,8 +104,8 @@
     drawMode = mode || 'zone';
     drawingActive = true;
     editingActive = false;
-    // 그리기 모드에서는 위성지도로 복원
-    map.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+    // 그리기 모드에서는 필터 제거 (원래 위성지도)
+    document.getElementById('map').style.filter = '';
     clearDrawing();
     clearEditMarkers();
 
@@ -278,8 +278,8 @@
   function renderViewZones(zones) {
     viewPolygons.forEach(function(o) { o.setMap(null); });
     viewPolygons = [];
-    // 뷰 모드: 연한 도로지도로 전환 (위성지도는 시각적으로 복잡)
-    map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
+    // 뷰 모드: 위성지도 유지하되 연하게 처리 (위치 확인 정도만)
+    document.getElementById('map').style.filter = 'brightness(1.55) saturate(0.35) contrast(0.88)';
     if (!zones || !zones.length) return;
     var bounds = new kakao.maps.LatLngBounds();
     var zoneBounds = new kakao.maps.LatLngBounds();
