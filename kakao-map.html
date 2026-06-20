@@ -119,8 +119,8 @@
       var path = yardVerticesGuide.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
       yardPolygonGuide = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 2, strokeColor: '#D1D5DB', strokeOpacity: 0.8, strokeStyle: 'dash',
-        fillColor: '#6B7280', fillOpacity: 0.15
+        strokeWeight: 5, strokeColor: '#FDE047', strokeOpacity: 1, strokeStyle: 'solid',
+        fillColor: '#F59E0B', fillOpacity: 0.10
       });
       map.setCenter(path[0]);
     }
@@ -177,8 +177,8 @@
     if (path.length >= 3) {
       drawPolygon = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95,
-        fillColor: '#F59E0B', fillOpacity: .22
+        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1,
+        fillColor: '#F59E0B', fillOpacity: .18
       });
     }
   }
@@ -256,14 +256,14 @@
     if (path.length >= 2) {
       drawPolyline = new kakao.maps.Polyline({
         map: map, path: path,
-        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95, strokeStyle: 'solid'
+        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1, strokeStyle: 'solid'
       });
     }
     if (path.length >= 3) {
       drawPolygon = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: .95,
-        fillColor: '#F59E0B', fillOpacity: .22
+        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1,
+        fillColor: '#F59E0B', fillOpacity: .18
       });
     }
   }
@@ -291,7 +291,7 @@
     if (!fader) {
       fader = document.createElement('div');
       fader.id = 'map-fader';
-      fader.style.cssText = 'position:absolute;inset:0;background:rgba(255,255,255,0.55);z-index:150;pointer-events:none;';
+      fader.style.cssText = 'position:absolute;inset:0;background:rgba(255,255,255,0.18);z-index:150;pointer-events:none;';
       document.getElementById('map').appendChild(fader);
     }
     fader.style.display = 'block';
@@ -313,12 +313,12 @@
         var yardPoly = new kakao.maps.Polygon({
           map: map,
           path: path,
-          strokeWeight: 2.5,
-          strokeColor: '#6B7280',
-          strokeOpacity: 0.7,
-          strokeStyle: 'dashed',
-          fillColor: '#6B7280',
-          fillOpacity: 0.04
+          strokeWeight: 5,
+          strokeColor: '#FDE047',
+          strokeOpacity: 1,
+          strokeStyle: 'solid',
+          fillColor: '#F59E0B',
+          fillOpacity: 0.08
         });
         viewPolygons.push(yardPoly);
         return;
@@ -327,12 +327,12 @@
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
-        strokeWeight: 4,
+        strokeWeight: 6,
         strokeColor: color,
         strokeOpacity: 1,
         strokeStyle: 'solid',
         fillColor: color,
-        fillOpacity: 0.25,
+        fillOpacity: 0.32,
         zIndex: 10
       });
       kakao.maps.event.addListener(poly, 'click', function() {
