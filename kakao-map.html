@@ -119,8 +119,8 @@
       var path = yardVerticesGuide.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
       yardPolygonGuide = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 5, strokeColor: '#FDE047', strokeOpacity: 1, strokeStyle: 'solid',
-        fillColor: '#F59E0B', fillOpacity: 0.10
+        strokeWeight: 4, strokeColor: '#FDE047', strokeOpacity: 1, strokeStyle: 'shortdash',
+        fillColor: '#F59E0B', fillOpacity: 0
       });
       map.setCenter(path[0]);
     }
@@ -286,6 +286,7 @@
     if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
     // 뷰 모드: 팬(이동) 비활성화 — 스크롤 줌은 유지
     map.setDraggable(false);
+    map.setZoomable(true);
     // 위성지도 타일만 연하게: 타일 레이어(z-index≈100) 위, 폴리곤 오버레이(z-index≈200) 아래에 흰색 레이어 삽입
     var fader = document.getElementById('map-fader');
     if (!fader) {
@@ -313,12 +314,12 @@
         var yardPoly = new kakao.maps.Polygon({
           map: map,
           path: path,
-          strokeWeight: 5,
+          strokeWeight: 4,
           strokeColor: '#FDE047',
           strokeOpacity: 1,
-          strokeStyle: 'solid',
+          strokeStyle: 'shortdash',
           fillColor: '#F59E0B',
-          fillOpacity: 0.08
+          fillOpacity: 0
         });
         viewPolygons.push(yardPoly);
         return;
@@ -399,10 +400,10 @@
       var bCount = 0;
       _blinkTimer = setInterval(function() {
         bCount++;
-        try { bPoly.setOptions({ fillOpacity: bCount % 2 === 0 ? 0.25 : 0.72 }); } catch(e) {}
+        try { bPoly.setOptions({ fillOpacity: bCount % 2 === 0 ? 0.32 : 0.78 }); } catch(e) {}
         if (bCount >= 12) {
           clearInterval(_blinkTimer); _blinkTimer = null;
-          try { bPoly.setOptions({ fillOpacity: 0.25 }); } catch(e) {}
+          try { bPoly.setOptions({ fillOpacity: 0.32 }); } catch(e) {}
         }
       }, 250);
     }
