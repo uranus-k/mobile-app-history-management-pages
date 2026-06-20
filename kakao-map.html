@@ -104,6 +104,8 @@
     drawMode = mode || 'zone';
     drawingActive = true;
     editingActive = false;
+    // 그리기 모드에서는 위성지도로 복원
+    map.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
     clearDrawing();
     clearEditMarkers();
 
@@ -276,9 +278,11 @@
   function renderViewZones(zones) {
     viewPolygons.forEach(function(o) { o.setMap(null); });
     viewPolygons = [];
+    // 뷰 모드: 연한 도로지도로 전환 (위성지도는 시각적으로 복잡)
+    map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
     if (!zones || !zones.length) return;
     var bounds = new kakao.maps.LatLngBounds();
-    var zoneBounds = new kakao.maps.LatLngBounds(); // 야드 제외한 구역 범위
+    var zoneBounds = new kakao.maps.LatLngBounds();
     var hasZones = false;
     zones.forEach(function(zone) {
       if (!zone.vertices || zone.vertices.length < 3) return;
@@ -294,25 +298,26 @@
         var yardPoly = new kakao.maps.Polygon({
           map: map,
           path: path,
-          strokeWeight: 3,
+          strokeWeight: 2.5,
           strokeColor: '#6B7280',
-          strokeOpacity: 0.85,
+          strokeOpacity: 0.7,
           strokeStyle: 'dashed',
           fillColor: '#6B7280',
-          fillOpacity: 0.03
+          fillOpacity: 0.04
         });
         viewPolygons.push(yardPoly);
         return;
       }
+      // 세부 구역 — 실선 폴리곤으로 깔끔하게 표시
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
         strokeWeight: 2.5,
         strokeColor: color,
-        strokeOpacity: 0.95,
-        strokeStyle: 'dashed',
+        strokeOpacity: 1,
+        strokeStyle: 'solid',
         fillColor: color,
-        fillOpacity: 0.06
+        fillOpacity: 0.28
       });
       kakao.maps.event.addListener(poly, 'click', function() {
         window.parent.postMessage({ type: 'VIEW_ZONE_CLICK', zoneId: zone.zoneId }, originForPost);
@@ -325,14 +330,13 @@
       var label = new kakao.maps.CustomOverlay({
         map: map,
         position: new kakao.maps.LatLng(cLat, cLng),
-        content: '<div style="background:rgba(255,255,255,.82);padding:2px 7px;border-radius:4px;'
-          + 'font-size:11px;font-weight:800;color:' + color + ';white-space:nowrap;'
-          + 'border:1px dashed ' + color + ';pointer-events:none">' + (zone.zoneName || zone.zoneId) + '</div>',
+        content: '<div style="background:' + color + ';padding:3px 9px;border-radius:5px;'
+          + 'font-size:12px;font-weight:800;color:#fff;white-space:nowrap;'
+          + 'box-shadow:0 2px 6px rgba(0,0,0,.25);pointer-events:none">' + (zone.zoneName || zone.zoneId) + '</div>',
         zIndex: 4
       });
       viewPolygons.push(label);
     });
-    // 구역이 있으면 구역 기준으로, 없으면 전체 bounds로 지도 맞춤
     try {
       if (hasZones) { map.setBounds(zoneBounds, 60); }
       else { map.setBounds(bounds, 40); }
