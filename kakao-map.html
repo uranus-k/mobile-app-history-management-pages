@@ -104,8 +104,9 @@
     drawMode = mode || 'zone';
     drawingActive = true;
     editingActive = false;
-    // 그리기 모드에서는 필터 제거 (원래 위성지도)
-    document.getElementById('map').style.filter = '';
+    // 그리기 모드에서는 흰색 레이어 숨김 (선명한 위성지도)
+    var fader = document.getElementById('map-fader');
+    if (fader) fader.style.display = 'none';
     clearDrawing();
     clearEditMarkers();
 
@@ -278,8 +279,15 @@
   function renderViewZones(zones) {
     viewPolygons.forEach(function(o) { o.setMap(null); });
     viewPolygons = [];
-    // 뷰 모드: 위성지도 유지하되 연하게 처리 (위치 확인 정도만)
-    document.getElementById('map').style.filter = 'brightness(1.55) saturate(0.35) contrast(0.88)';
+    // 위성지도 타일만 연하게: 타일 레이어(z-index≈100) 위, 폴리곤 오버레이(z-index≈200) 아래에 흰색 레이어 삽입
+    var fader = document.getElementById('map-fader');
+    if (!fader) {
+      fader = document.createElement('div');
+      fader.id = 'map-fader';
+      fader.style.cssText = 'position:absolute;inset:0;background:rgba(255,255,255,0.55);z-index:150;pointer-events:none;';
+      document.getElementById('map').appendChild(fader);
+    }
+    fader.style.display = 'block';
     if (!zones || !zones.length) return;
     var bounds = new kakao.maps.LatLngBounds();
     var zoneBounds = new kakao.maps.LatLngBounds();
@@ -308,16 +316,17 @@
         viewPolygons.push(yardPoly);
         return;
       }
-      // 세부 구역 — 실선 폴리곤으로 깔끔하게 표시
+      // 세부 구역 — 두꺼운 실선 폴리곤으로 선명하게 표시
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
-        strokeWeight: 2.5,
+        strokeWeight: 4,
         strokeColor: color,
         strokeOpacity: 1,
         strokeStyle: 'solid',
         fillColor: color,
-        fillOpacity: 0.28
+        fillOpacity: 0.25,
+        zIndex: 10
       });
       kakao.maps.event.addListener(poly, 'click', function() {
         window.parent.postMessage({ type: 'VIEW_ZONE_CLICK', zoneId: zone.zoneId }, originForPost);
