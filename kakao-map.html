@@ -69,6 +69,10 @@
   var viewPolyMap  = {}; // {zoneId → {poly, label}} 블링크 접근용
   var viewPin      = null; // 뷰 모드 핀 마커
   var _blinkTimer  = null;
+  // ── 뷰 모드 인라인 구역 편집 ────────────────────────────────
+  var _veZoneId    = null;
+  var _veMarkers   = [];
+  var _vePolyline  = null;
   var drawVertices = [];
   var drawMarkers = [];   // numbered CustomOverlay dots (draw mode)
   var editMarkers = [];   // draggable Markers (edit mode)
@@ -297,8 +301,8 @@
     viewPolygons = [];
     viewPolyMap  = {};
     if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
-    // 뷰 모드: 팬(이동) 비활성화 — 스크롤 줌은 유지
-    map.setDraggable(false);
+    // 뷰 모드: 드래그 이동 + 스크롤 줌 모두 허용
+    map.setDraggable(true);
     map.setZoomable(true);
     // 위성지도 타일만 연하게: 타일 레이어(z-index≈100) 위, 폴리곤 오버레이(z-index≈200) 아래에 흰색 레이어 삽입
     var fader = document.getElementById('map-fader');
@@ -363,7 +367,7 @@
         window.parent.postMessage({ type: 'VIEW_ZONE_CLICK', zoneId: zone.zoneId }, originForPost);
       });
       viewPolygons.push(poly);
-      viewPolyMap[zone.zoneId] = { poly: poly };
+      viewPolyMap[zone.zoneId] = { poly: poly, label: null };
       // 구역 라벨
       var cLat = 0, cLng = 0;
       zone.vertices.forEach(function(v) { cLat += v.lat; cLng += v.lng; });
@@ -376,12 +380,68 @@
           + 'box-shadow:0 2px 6px rgba(0,0,0,.25);pointer-events:none">' + (zone.zoneName || zone.zoneId) + '</div>',
         zIndex: 4
       });
+      viewPolyMap[zone.zoneId].label = label;
       viewPolygons.push(label);
     });
     try {
-      if (hasZones) { map.setBounds(zoneBounds, 60); }
-      else { map.setBounds(bounds, 40); }
+      map.setBounds(bounds, 40);
     } catch(e) {}
+  }
+
+  // ── 뷰맵 구역 꼭짓점 인라인 편집 ────────────────────────────
+  function startViewZoneEdit(zoneId, vertices) {
+    cancelViewZoneEdit(false);
+    _veZoneId = zoneId;
+    var entry = viewPolyMap[zoneId];
+    if (entry) {
+      if (entry.poly) entry.poly.setMap(null);
+      if (entry.label) entry.label.setMap(null);
+    }
+    vertices.forEach(function(v) {
+      var m = new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(Number(v.lat), Number(v.lng)),
+        draggable: true,
+        zIndex: 50
+      });
+      kakao.maps.event.addListener(m, 'drag', _updateVePolyline);
+      _veMarkers.push(m);
+    });
+    _updateVePolyline();
+  }
+
+  function _updateVePolyline() {
+    var path = _veMarkers.map(function(m) { return m.getPosition(); });
+    if (path.length >= 2) path.push(path[0]);
+    if (_vePolyline) _vePolyline.setMap(null);
+    _vePolyline = new kakao.maps.Polyline({
+      map: map, path: path,
+      strokeWeight: 3, strokeColor: '#F59E0B', strokeOpacity: 1, strokeStyle: 'shortdash'
+    });
+  }
+
+  function confirmViewZoneEdit() {
+    if (!_veZoneId || _veMarkers.length < 3) return;
+    var vertices = _veMarkers.map(function(m, i) {
+      var p = m.getPosition();
+      return { seq: i + 1, lat: p.getLat(), lng: p.getLng() };
+    });
+    notifyParent({ type: 'KAKAO_ZONE_EDIT_END', zoneId: _veZoneId, data: vertices });
+    cancelViewZoneEdit(false);
+  }
+
+  function cancelViewZoneEdit(restore) {
+    _veMarkers.forEach(function(m) { m.setMap(null); });
+    _veMarkers = [];
+    if (_vePolyline) { _vePolyline.setMap(null); _vePolyline = null; }
+    if (restore !== false && _veZoneId) {
+      var entry = viewPolyMap[_veZoneId];
+      if (entry) {
+        if (entry.poly) entry.poly.setMap(map);
+        if (entry.label) entry.label.setMap(map);
+      }
+    }
+    _veZoneId = null;
   }
 
   window.addEventListener('message', function(e) {
@@ -425,6 +485,12 @@
       map.setCenter(pinPos);
     } else if (d.type === 'clearViewPin') {
       if (viewPin) { viewPin.setMap(null); viewPin = null; }
+    } else if (d.type === 'editViewZone') {
+      startViewZoneEdit(d.zoneId, d.vertices || []);
+    } else if (d.type === 'confirmViewZoneEdit') {
+      confirmViewZoneEdit();
+    } else if (d.type === 'cancelViewZoneEdit') {
+      cancelViewZoneEdit(true);
     } else if (d.type === 'blinkZone') {
       if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
       var entry = viewPolyMap[d.zoneId];
