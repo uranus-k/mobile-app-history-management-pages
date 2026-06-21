@@ -181,7 +181,7 @@
     if (path.length >= 3) {
       drawPolygon = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1,
+        strokeWeight: 2, strokeColor: '#F59E0B', strokeOpacity: 1,
         fillColor: '#F59E0B', fillOpacity: .36
       });
     }
@@ -194,6 +194,15 @@
       return { seq: idx + 1, lat: p.getLat(), lng: p.getLng() };
     });
     if (vertices.length < 3) { alert('꼭짓점이 부족합니다.'); return; }
+    if (drawMode === 'zone' && yardVerticesGuide.length >= 3) {
+      var allInside = vertices.every(function(v) {
+        return isPointInPolygon(v.lat, v.lng, yardVerticesGuide);
+      });
+      if (!allInside) {
+        alert('세부구역은 적치장 경계 안쪽에만 저장할 수 있습니다. 밖으로 나간 점을 안쪽으로 옮겨주세요.');
+        return;
+      }
+    }
     var type = (drawMode === 'yard') ? 'KAKAO_YARD_DRAW_END' : 'KAKAO_ZONE_DRAW_END';
     notifyParent({ type: type, data: vertices });
     cancelDrawing();
@@ -260,13 +269,13 @@
     if (path.length >= 2) {
       drawPolyline = new kakao.maps.Polyline({
         map: map, path: path,
-        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1, strokeStyle: 'solid'
+        strokeWeight: 2, strokeColor: '#F59E0B', strokeOpacity: 1, strokeStyle: 'solid'
       });
     }
     if (path.length >= 3) {
       drawPolygon = new kakao.maps.Polygon({
         map: map, path: path,
-        strokeWeight: 6, strokeColor: '#F59E0B', strokeOpacity: 1,
+        strokeWeight: 2, strokeColor: '#F59E0B', strokeOpacity: 1,
         fillColor: '#F59E0B', fillOpacity: .18
       });
     }
@@ -342,7 +351,7 @@
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
-        strokeWeight: 6,
+        strokeWeight: 2,
         strokeColor: color,
         strokeOpacity: 1,
         strokeStyle: 'solid',
