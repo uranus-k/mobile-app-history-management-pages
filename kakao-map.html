@@ -35,11 +35,24 @@
       0%,100% { transform:translateY(-2px); }
       50% { transform:translateY(-13px); }
     }
+    /* 적치장명 오버레이 */
+    #yard-name-overlay {
+      position:absolute; top:10px; left:10px; z-index:20;
+      display:none; align-items:center; gap:6px;
+      background:rgba(15,23,42,.78); border:1px solid rgba(253,224,71,.35);
+      border-radius:8px; padding:5px 12px;
+      color:#FDE047; font-size:13px; font-weight:800;
+      font-family:'Noto Sans KR',system-ui,sans-serif;
+      box-shadow:0 4px 14px rgba(0,0,0,.35); pointer-events:none;
+      white-space:nowrap;
+    }
+    #yard-name-overlay.visible { display:flex; }
   </style>
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=f95e6bfd50bbf2a72472a4248d6582a9&libraries=services"></script>
 </head>
 <body>
 <div id="map"></div>
+<div id="yard-name-overlay"><i>🏭</i><span id="yard-name-text"></span></div>
 <div id="draw-toolbar">
   <span id="hint-draw"><b>구역 지정</b> 꼭짓점을 순서대로 클릭한 뒤 완료를 누르세요.</span>
   <span id="hint-edit" style="display:none"><b>편집 모드</b> 꼭짓점을 드래그하여 조정하세요.</span>
@@ -69,10 +82,12 @@
   var viewPolyMap  = {}; // {zoneId → {poly, label}} 블링크 접근용
   var viewPin      = null; // 뷰 모드 핀 마커
   var _blinkTimer  = null;
-  // ── 뷰 모드 인라인 구역 편집 ────────────────────────────────
+  // ── 뷰 모드 인라인 편집 ────────────────────────────────────
+  var _veMode      = null;  // 'zone' | 'yard'
   var _veZoneId    = null;
   var _veMarkers   = [];
   var _vePolyline  = null;
+  var _yardBounds  = null;  // 드래그 범위 제한용 야드 bbox {sw, ne}
   var drawVertices = [];
   var drawMarkers = [];   // numbered CustomOverlay dots (draw mode)
   var editMarkers = [];   // draggable Markers (edit mode)
@@ -313,6 +328,16 @@
       document.getElementById('map').appendChild(fader);
     }
     fader.style.display = 'block';
+    // 적치장명 오버레이 업데이트
+    var yardZone = (zones || []).find(function(z) { return z && z.isYard; });
+    var yardNameEl = document.getElementById('yard-name-overlay');
+    var yardNameText = document.getElementById('yard-name-text');
+    if (yardZone && yardZone.zoneName && yardNameEl && yardNameText) {
+      yardNameText.textContent = yardZone.zoneName;
+      yardNameEl.classList.add('visible');
+    } else if (yardNameEl) {
+      yardNameEl.classList.remove('visible');
+    }
     if (!zones || !zones.length) return;
     var yardGuide = null;
     zones.forEach(function(z) {
@@ -383,14 +408,49 @@
       viewPolyMap[zone.zoneId].label = label;
       viewPolygons.push(label);
     });
+    // 야드 바운드 저장 (드래그 범위 제한용) — 야드 꼭짓점 기준으로 확장 bbox 계산
+    if (yardGuide && yardGuide.length >= 3) {
+      var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      yardGuide.forEach(function(v) {
+        if (v.lat < minLat) minLat = v.lat; if (v.lat > maxLat) maxLat = v.lat;
+        if (v.lng < minLng) minLng = v.lng; if (v.lng > maxLng) maxLng = v.lng;
+      });
+      var pad = Math.max(maxLat - minLat, maxLng - minLng) * 1.2;
+      _yardBounds = {
+        minLat: minLat - pad, maxLat: maxLat + pad,
+        minLng: minLng - pad, maxLng: maxLng + pad
+      };
+    } else {
+      _yardBounds = null;
+    }
     try {
       map.setBounds(bounds, 40);
     } catch(e) {}
   }
 
   // ── 뷰맵 구역 꼭짓점 인라인 편집 ────────────────────────────
+  // ── 야드 경계 꼭짓점 인라인 편집 (뷰맵) ─────────────────────
+  function startYardEdit(vertices) {
+    cancelViewZoneEdit(false);
+    _veMode   = 'yard';
+    _veZoneId = '__yard__';
+    vertices.forEach(function(v, i) {
+      var m = new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(Number(v.lat), Number(v.lng)),
+        draggable: true, zIndex: 50,
+        title: (i + 1) + '번 꼭짓점'
+      });
+      kakao.maps.event.addListener(m, 'drag', _updateVePolyline);
+      _veMarkers.push(m);
+    });
+    _updateVePolyline();
+    notifyParent({ type: 'YARD_EDIT_STARTED' });
+  }
+
   function startViewZoneEdit(zoneId, vertices) {
     cancelViewZoneEdit(false);
+    _veMode   = 'zone';
     _veZoneId = zoneId;
     var entry = viewPolyMap[zoneId];
     if (entry) {
@@ -426,7 +486,11 @@
       var p = m.getPosition();
       return { seq: i + 1, lat: p.getLat(), lng: p.getLng() };
     });
-    notifyParent({ type: 'KAKAO_ZONE_EDIT_END', zoneId: _veZoneId, data: vertices });
+    if (_veMode === 'yard') {
+      notifyParent({ type: 'KAKAO_YARD_EDIT_END', data: vertices });
+    } else {
+      notifyParent({ type: 'KAKAO_ZONE_EDIT_END', zoneId: _veZoneId, data: vertices });
+    }
     cancelViewZoneEdit(false);
   }
 
@@ -434,7 +498,7 @@
     _veMarkers.forEach(function(m) { m.setMap(null); });
     _veMarkers = [];
     if (_vePolyline) { _vePolyline.setMap(null); _vePolyline = null; }
-    if (restore !== false && _veZoneId) {
+    if (restore !== false && _veMode === 'zone' && _veZoneId) {
       var entry = viewPolyMap[_veZoneId];
       if (entry) {
         if (entry.poly) entry.poly.setMap(map);
@@ -442,6 +506,7 @@
       }
     }
     _veZoneId = null;
+    _veMode   = null;
   }
 
   window.addEventListener('message', function(e) {
@@ -485,6 +550,8 @@
       map.setCenter(pinPos);
     } else if (d.type === 'clearViewPin') {
       if (viewPin) { viewPin.setMap(null); viewPin = null; }
+    } else if (d.type === 'editYardVertices') {
+      startYardEdit(d.vertices || []);
     } else if (d.type === 'editViewZone') {
       startViewZoneEdit(d.zoneId, d.vertices || []);
     } else if (d.type === 'confirmViewZoneEdit') {
@@ -531,6 +598,18 @@
     placeMarker(lat, lng);
     reverseGeocode(lat, lng);
     notifyParent({ type: 'coords', lat: lat, lng: lng });
+  });
+
+  // ── 드래그 범위 제한 (야드 bbox 2x 패딩 초과 시 복귀) ───────
+  kakao.maps.event.addListener(map, 'dragend', function() {
+    if (!_yardBounds) return;
+    var c = map.getCenter();
+    var lat = c.getLat(), lng = c.getLng();
+    var clampLat = Math.min(Math.max(lat, _yardBounds.minLat), _yardBounds.maxLat);
+    var clampLng = Math.min(Math.max(lng, _yardBounds.minLng), _yardBounds.maxLng);
+    if (clampLat !== lat || clampLng !== lng) {
+      map.panTo(new kakao.maps.LatLng(clampLat, clampLng));
+    }
   });
 
   function placeMarker(lat, lng) {
