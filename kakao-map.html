@@ -297,11 +297,21 @@
     }
     fader.style.display = 'block';
     if (!zones || !zones.length) return;
+    var yardGuide = null;
+    zones.forEach(function(z) {
+      if (z && z.isYard && z.vertices && z.vertices.length >= 3) yardGuide = z.vertices;
+    });
     var bounds = new kakao.maps.LatLngBounds();
     var zoneBounds = new kakao.maps.LatLngBounds();
     var hasZones = false;
     zones.forEach(function(zone) {
       if (!zone.vertices || zone.vertices.length < 3) return;
+      if (!zone.isYard && yardGuide && yardGuide.length >= 3) {
+        var allInside = zone.vertices.every(function(v) {
+          return isPointInPolygon(Number(v.lat), Number(v.lng), yardGuide);
+        });
+        if (!allInside) return;
+      }
       var path = zone.vertices.map(function(v) {
         var latlng = new kakao.maps.LatLng(v.lat, v.lng);
         bounds.extend(latlng);
