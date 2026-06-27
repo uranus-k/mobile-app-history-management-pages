@@ -124,8 +124,15 @@
     return inside;
   }
 
+  // 그리기 중 기존 세부구역을 옅게 보여주는 가이드 폴리곤
+  var drawGuideZones = [];
+  function clearDrawGuideZones() {
+    drawGuideZones.forEach(function(o) { if (o && o.setMap) o.setMap(null); });
+    drawGuideZones = [];
+  }
+
   // ─── 드로잉 시작 ─────────────────────────────────────────
-  function startDrawMode(mode, yardVertices) {
+  function startDrawMode(mode, yardVertices, existingZones) {
     drawMode = mode || 'zone';
     drawingActive = true;
     editingActive = false;
@@ -135,6 +142,7 @@
     if (fader) fader.style.display = 'none';
     clearDrawing();
     clearEditMarkers();
+    clearDrawGuideZones();
 
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = yardVertices || [];
@@ -146,6 +154,28 @@
         fillColor: '#F59E0B', fillOpacity: 0
       });
       map.setCenter(path[0]);
+    }
+
+    // 이미 정의된 세부구역을 옅게 표시 — 어디까지 그렸는지 보이도록 (겹침 회피 가이드)
+    if (drawMode === 'zone' && existingZones && existingZones.length) {
+      existingZones.forEach(function(z) {
+        if (!z || !z.vertices || z.vertices.length < 3) return;
+        var zp = z.vertices.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
+        var gp = new kakao.maps.Polygon({
+          map: map, path: zp, zIndex: 1,
+          strokeWeight: 2, strokeColor: '#2563EB', strokeOpacity: .95, strokeStyle: 'solid',
+          fillColor: '#2563EB', fillOpacity: .18
+        });
+        drawGuideZones.push(gp);
+        var cLat = 0, cLng = 0;
+        z.vertices.forEach(function(v) { cLat += v.lat; cLng += v.lng; });
+        var lbl = new kakao.maps.CustomOverlay({
+          map: map, position: new kakao.maps.LatLng(cLat / z.vertices.length, cLng / z.vertices.length),
+          yAnchor: .5, zIndex: 2,
+          content: '<div style="background:rgba(37,99,235,.92);color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;white-space:nowrap;pointer-events:none">' + (z.zoneName || z.zoneId || '') + '</div>'
+        });
+        drawGuideZones.push(lbl);
+      });
     }
 
     setDrawMode();
@@ -244,6 +274,7 @@
     editingActive = false;
     clearEditMarkers();
     clearDrawing();
+    clearDrawGuideZones();
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = [];
     setDrawMode();
@@ -514,7 +545,7 @@
     if (!d || !d.type) return;
     originForPost = e.origin || '*';
     if (d.type === 'startKakaoDrawing' || d.type === 'enterDrawMode') {
-      startDrawMode(d.mode, d.yardVertices);
+      startDrawMode(d.mode, d.yardVertices, d.existingZones);
     } else if (d.type === 'exitDrawMode') {
       cancelDrawing();
     } else if (d.type === 'moveTo') {
