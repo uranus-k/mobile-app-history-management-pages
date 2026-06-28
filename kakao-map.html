@@ -73,23 +73,12 @@
   });
   // 고정 화면에서도 적치장 중심으로 확대/축소할 수 있게 +/- 줌 버튼 추가
   try { map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT); } catch (e) {}
-  // 안전장치: 고정(뷰) 상태에서 혹시 맵이 이동되면 적치장 영역으로 자동 복귀
-  var _viewFitBbox = null;
-  kakao.maps.event.addListener(map, 'dragend', function() {
-    if (!drawingActive && !editingActive && _viewFitBbox) {
-      var sw2 = new kakao.maps.LatLng(_viewFitBbox.minLat, _viewFitBbox.minLng);
-      var ne2 = new kakao.maps.LatLng(_viewFitBbox.maxLat, _viewFitBbox.maxLng);
-      map.setBounds(new kakao.maps.LatLngBounds(sw2, ne2), 64);
-    }
-  });
-  // 뷰(배경) 기본값: 상호작용 잠금 — 드래그·줌 재렌더 제거로 '고정 캡쳐 화면'처럼 가볍게.
-  // 그리기 모드에서만 잠금 해제(아래 startDrawMode). 프로그램적 setBounds/setCenter는 그대로 동작.
+  // 뷰 맵: 마우스 드래그(손바닥)로 이동 + 휠 스크롤로 확대/축소 모두 허용.
+  // 자동 복귀/리셋 없음 — 사용자가 본 위치/배율 그대로 유지. (적치장 영역은 처음 로드 시 1회만 맞춤)
   function setMapInteractive(on) {
-    // on=true: 드래그+줌 모두 허용(그리기 모드).
-    // on=false: 이동(드래그)·스크롤줌 모두 잠금(고정). 확대/축소는 +/- 버튼(중심 기준)으로만.
     try { map.setDraggable(!!on); map.setZoomable(!!on); } catch (e) {}
   }
-  setMapInteractive(false);
+  setMapInteractive(true);
   var marker = null;
   var originForPost = '*';
   var drawingActive = false;
@@ -340,7 +329,7 @@
     clearDrawGuideZones();
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = [];
-    setMapInteractive(false);  // 그리기 종료 → 다시 고정(잠금)
+    setMapInteractive(true);  // 그리기 종료 → 뷰 상호작용 유지
     setDrawMode();
     document.getElementById('draw-toolbar').classList.remove('visible');
     document.getElementById('draw-count').classList.remove('visible');
@@ -411,8 +400,8 @@
     viewPolygons = [];
     viewPolyMap  = {};
     if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
-    // 뷰 모드: 고정 화면 — 드래그·줌 잠금 (그리기 모드에서만 해제)
-    setMapInteractive(false);
+    // 뷰 모드: 마우스 이동·휠 확대/축소 허용 (자동 복귀 없음)
+    setMapInteractive(true);
     // 위성지도 타일만 연하게: 타일 레이어(z-index≈100) 위, 폴리곤 오버레이(z-index≈200) 아래에 흰색 레이어 삽입
     var fader = document.getElementById('map-fader');
     if (!fader) {
@@ -620,7 +609,6 @@
       renderViewZones(d.zones || []);
     } else if (d.type === 'viewCenter') {
       if (d.bbox) {
-        _viewFitBbox = d.bbox;
         var sw = new kakao.maps.LatLng(d.bbox.minLat, d.bbox.minLng);
         var ne = new kakao.maps.LatLng(d.bbox.maxLat, d.bbox.maxLng);
         map.setBounds(new kakao.maps.LatLngBounds(sw, ne), 64);
