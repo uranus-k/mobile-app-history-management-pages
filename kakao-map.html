@@ -49,6 +49,7 @@
     #yard-name-overlay.visible { display:flex; }
   </style>
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=f95e6bfd50bbf2a72472a4248d6582a9&libraries=services"></script>
+  <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.js"></script>
 </head>
 <body>
 <div id="map"></div>
@@ -77,6 +78,7 @@
   var drawMode = 'zone'; // 'yard' | 'zone'
   var yardPolygonGuide = null;
   var yardVerticesGuide = [];
+  var drawExistingZonesData = [];  // 그리기 중 겹침 클리핑 기준이 되는 기존 세부구역
   // ── 뷰 모드 (배경 지도 전용) ──────────────────────────────
   var viewPolygons = []; // 뷰 모드에서 그려진 다각형/라벨 오버레이
   var viewPolyMap  = {}; // {zoneId → {poly, label}} 블링크 접근용
@@ -134,6 +136,7 @@
   // ─── 드로잉 시작 ─────────────────────────────────────────
   function startDrawMode(mode, yardVertices, existingZones) {
     drawMode = mode || 'zone';
+    drawExistingZonesData = (existingZones || []).filter(function(z) { return z && z.vertices && z.vertices.length >= 3; });
     drawingActive = true;
     editingActive = false;
     // 그리기 모드: 팬 복원 + 흰색 레이어 숨김 (선명한 위성지도)
@@ -237,6 +240,38 @@
   }
 
   // ─── 확정 저장 ───────────────────────────────────────────
+  // ─── 겹침 자동 클리핑 (기존 세부구역 우선 — 겹치는 부분은 잘라냄) ───
+  function _zoneRing(verts) { return verts.map(function(v) { return [Number(v.lng), Number(v.lat)]; }); }
+  function _ringSignedArea(ring) {
+    var a = 0;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+    }
+    return a / 2;
+  }
+  function clipZoneAgainstExisting(vertices) {
+    if (typeof polygonClipping === 'undefined') return { ok: true, vertices: vertices };
+    var subs = (drawExistingZonesData || []).filter(function(z) { return z && z.vertices && z.vertices.length >= 3; });
+    if (!subs.length) return { ok: true, vertices: vertices };
+    try {
+      var subject = [_zoneRing(vertices)];
+      var clips = subs.map(function(z) { return [_zoneRing(z.vertices)]; });
+      var diff = polygonClipping.difference.apply(null, [subject].concat(clips));
+      if (!diff || !diff.length) return { ok: false, vertices: null }; // 기존 구역과 완전히 겹침
+      var best = null, bestA = -1;
+      diff.forEach(function(poly) {
+        var outer = poly[0];
+        var a = Math.abs(_ringSignedArea(outer));
+        if (a > bestA) { bestA = a; best = outer; }
+      });
+      if (!best || best.length < 4) return { ok: true, vertices: vertices };
+      var out = best.map(function(p) { return { lat: p[1], lng: p[0] }; });
+      if (out.length > 1) { var f = out[0], l = out[out.length - 1]; if (f.lat === l.lat && f.lng === l.lng) out.pop(); }
+      if (out.length < 3) return { ok: true, vertices: vertices };
+      return { ok: true, vertices: out, clipped: (out.length !== vertices.length) };
+    } catch (e) { return { ok: true, vertices: vertices }; }
+  }
+
   function confirmPolygon() {
     var vertices = editMarkers.map(function(m, idx) {
       var p = m.getPosition();
@@ -251,6 +286,15 @@
         alert('세부구역은 적치장 경계 안쪽에만 저장할 수 있습니다. 밖으로 나간 점을 안쪽으로 옮겨주세요.');
         return;
       }
+    }
+    // 기존 세부구역과 겹치는 부분 자동 클리핑
+    if (drawMode === 'zone') {
+      var clip = clipZoneAgainstExisting(vertices);
+      if (!clip.ok) {
+        alert('이 영역은 기존 구역과 완전히 겹쳐 저장할 수 없습니다. 겹치지 않는 위치에 그려주세요.');
+        return;
+      }
+      vertices = clip.vertices.map(function(v, idx) { return { seq: idx + 1, lat: v.lat, lng: v.lng }; });
     }
     var type = (drawMode === 'yard') ? 'KAKAO_YARD_DRAW_END' : 'KAKAO_ZONE_DRAW_END';
     notifyParent({ type: type, data: vertices });
