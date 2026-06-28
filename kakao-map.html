@@ -74,7 +74,9 @@
   // 뷰(배경) 기본값: 상호작용 잠금 — 드래그·줌 재렌더 제거로 '고정 캡쳐 화면'처럼 가볍게.
   // 그리기 모드에서만 잠금 해제(아래 startDrawMode). 프로그램적 setBounds/setCenter는 그대로 동작.
   function setMapInteractive(on) {
-    try { map.setDraggable(!!on); map.setZoomable(!!on); } catch (e) {}
+    // on=true: 드래그+줌 모두 허용(그리기 모드). on=false: 이동(드래그)만 잠그고
+    // 확대/축소는 허용 — 적치장 영역을 중심으로 줌만 되는 '고정 화면'.
+    try { map.setDraggable(!!on); map.setZoomable(true); } catch (e) {}
   }
   setMapInteractive(false);
   var marker = null;
