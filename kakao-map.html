@@ -35,6 +35,16 @@
       0%,100% { transform:translateY(-2px); }
       50% { transform:translateY(-13px); }
     }
+    /* 정문 지정 툴바 */
+    #gate-toolbar {
+      position:absolute; top:8px; left:50%; transform:translateX(-50%);
+      display:none; align-items:center; gap:8px; z-index:11;
+      background:rgba(5,150,105,.96); border:1px solid rgba(255,255,255,.22);
+      border-radius:10px; padding:7px 12px; font-size:12px; color:#fff; white-space:nowrap;
+      box-shadow:0 8px 24px rgba(0,0,0,.3);
+    }
+    #gate-toolbar.visible { display:flex; }
+    #gate-toolbar b { color:#FDE68A; }
     /* 적치장명 오버레이 */
     #yard-name-overlay {
       position:absolute; top:10px; left:10px; z-index:20;
@@ -53,6 +63,11 @@
 <body>
 <div id="map"></div>
 <div id="yard-name-overlay"><i>🏭</i><span id="yard-name-text"></span></div>
+<div id="gate-toolbar">
+  <span>🚧 <b>정문 위치 지정</b> — 지도에서 정문 위치를 클릭하세요</span>
+  <button onclick="confirmGate()" style="padding:4px 12px;background:#FDE047;color:#0F172A;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit">✓ 확정</button>
+  <button onclick="cancelGateMode()" style="padding:4px 10px;background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:7px;font-size:12px;cursor:pointer;font-family:inherit">취소</button>
+</div>
 <div id="draw-toolbar">
   <span id="hint-draw"><b>구역 지정</b> 꼭짓점을 순서대로 클릭한 뒤 완료를 누르세요.</span>
   <span id="hint-edit" style="display:none"><b>편집 모드</b> 꼭짓점을 드래그하여 조정하세요.</span>
@@ -75,6 +90,8 @@
   var drawingActive = false;
   var editingActive = false;
   var drawMode = 'zone'; // 'yard' | 'zone'
+  var gateMode = false;
+  var gateMarkerCustom = null; // 정문 핀 (CustomOverlay)
   var yardPolygonGuide = null;
   var yardVerticesGuide = [];
   // ── 뷰 모드 (배경 지도 전용) ──────────────────────────────
@@ -122,6 +139,42 @@
       if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
     }
     return inside;
+  }
+
+  // ─── 정문 모드 ───────────────────────────────────────────
+  function startGateMode(existingLat, existingLng) {
+    gateMode = true;
+    drawingActive = false;
+    document.getElementById('gate-toolbar').classList.add('visible');
+    if (existingLat && existingLng) placeGateMarker(existingLat, existingLng);
+  }
+  function cancelGateMode() {
+    gateMode = false;
+    document.getElementById('gate-toolbar').classList.remove('visible');
+    if (gateMarkerCustom) { gateMarkerCustom.setMap(null); gateMarkerCustom = null; }
+    notifyParent({ type: 'GATE_MODE_CANCELLED' });
+  }
+  function confirmGate() {
+    if (!gateMarkerCustom) { alert('지도에서 정문 위치를 먼저 클릭하세요.'); return; }
+    var pos = gateMarkerCustom._pos;
+    gateMode = false;
+    document.getElementById('gate-toolbar').classList.remove('visible');
+    notifyParent({ type: 'GATE_POSITION_SELECTED', lat: pos.lat, lng: pos.lng });
+  }
+  function placeGateMarker(lat, lng) {
+    if (gateMarkerCustom) gateMarkerCustom.setMap(null);
+    gateMarkerCustom = new kakao.maps.CustomOverlay({
+      map: map,
+      position: new kakao.maps.LatLng(lat, lng),
+      yAnchor: 1,
+      zIndex: 25,
+      content: '<div style="text-align:center;transform:translateY(-4px)">'
+        + '<div style="width:32px;height:32px;background:#F59E0B;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 4px 12px rgba(0,0,0,.4)"></div>'
+        + '<div style="margin-top:2px;background:#0F172A;color:#FDE047;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:800;white-space:nowrap">🚧 정문</div>'
+        + '</div>'
+    });
+    gateMarkerCustom._pos = { lat: lat, lng: lng };
+    map.setCenter(new kakao.maps.LatLng(lat, lng));
   }
 
   // ─── 드로잉 시작 ─────────────────────────────────────────
@@ -513,7 +566,13 @@
     var d = e.data;
     if (!d || !d.type) return;
     originForPost = e.origin || '*';
-    if (d.type === 'startKakaoDrawing' || d.type === 'enterDrawMode') {
+    if (d.type === 'startGateMode') {
+      startGateMode(d.lat, d.lng);
+    } else if (d.type === 'cancelGateMode') {
+      cancelGateMode();
+    } else if (d.type === 'showGateMarker') {
+      placeGateMarker(d.lat, d.lng);
+    } else if (d.type === 'startKakaoDrawing' || d.type === 'enterDrawMode') {
       startDrawMode(d.mode, d.yardVertices);
     } else if (d.type === 'exitDrawMode') {
       cancelDrawing();
@@ -582,7 +641,13 @@
   kakao.maps.event.addListener(map, 'click', function(mouseEvent) {
     var latlng = mouseEvent.latLng;
 
-    if (editingActive) return; // 편집 모드에서는 지도 클릭 무시
+    if (editingActive) return;
+
+    // 정문 위치 지정 모드
+    if (gateMode) {
+      placeGateMarker(latlng.getLat(), latlng.getLng());
+      return;
+    }
 
     if (drawingActive) {
       var lat = latlng.getLat(), lng = latlng.getLng();
