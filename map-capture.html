@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>위성 배경 캡처</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; overflow:hidden; font-family:'Noto Sans KR',system-ui,sans-serif; background:#0B0F19; }
+    #map { width:100%; height:100%; }
+    #bar {
+      position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:30;
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center;
+      background:rgba(15,23,42,.93); border:1px solid rgba(255,255,255,.16);
+      border-radius:12px; padding:10px 14px; color:#fff; font-size:13px;
+      box-shadow:0 10px 30px rgba(0,0,0,.45); max-width:94%;
+    }
+    #bar b { color:#FDE68A; }
+    .btn { padding:7px 16px; border:none; border-radius:8px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit; }
+    #capBtn { background:#0EA5E9; color:#fff; }
+    #closeBtn { background:rgba(255,255,255,.16); color:#fff; }
+    #hint {
+      position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:30;
+      background:rgba(15,23,42,.86); color:#E2E8F0; font-size:12px; line-height:1.5;
+      padding:9px 15px; border-radius:10px; max-width:92%; text-align:center;
+      box-shadow:0 8px 22px rgba(0,0,0,.4);
+    }
+    #dl { color:#FDE68A; font-weight:800; text-decoration:underline; }
+  </style>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=f95e6bfd50bbf2a72472a4248d6582a9&libraries=services"></script>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar">
+  <span>🛰️ <b>위성 배경 캡처</b> — 적치장이 화면에 꽉 차게 맞춘 뒤</span>
+  <button class="btn" id="capBtn" onclick="doCapture()">📸 이 지도 캡처</button>
+  <button class="btn" id="closeBtn" onclick="window.close()">닫기</button>
+</div>
+<div id="hint">캡처 버튼 → 화면 공유 창에서 <b>"이 탭"</b> 선택 → 지도만 캡처해 자동 정렬됩니다.</div>
+
+<script>
+  var map = new kakao.maps.Map(document.getElementById('map'), {
+    center: new kakao.maps.LatLng(34.85, 128.62),
+    level: 4,
+    mapTypeId: kakao.maps.MapTypeId.HYBRID
+  });
+  var overlays = [];
+
+  function clearOverlays() {
+    overlays.forEach(function(o) { try { o.setMap(null); } catch (e) {} });
+    overlays = [];
+  }
+
+  function renderZones(zones) {
+    clearOverlays();
+    if (!zones || !zones.length) return;
+    var bounds = new kakao.maps.LatLngBounds();
+    zones.forEach(function(zone) {
+      if (!zone.vertices || zone.vertices.length < 3) return;
+      var path = zone.vertices.map(function(v) {
+        var ll = new kakao.maps.LatLng(Number(v.lat), Number(v.lng));
+        bounds.extend(ll);
+        return ll;
+      });
+      var color = zone.color || '#3B82F6';
+      if (zone.isYard) {
+        var yp = new kakao.maps.Polygon({
+          map: map, path: path, strokeWeight: 4, strokeColor: '#FDE047',
+          strokeOpacity: 1, strokeStyle: 'shortdash', fillColor: '#F59E0B', fillOpacity: 0
+        });
+        overlays.push(yp);
+        return;
+      }
+      var poly = new kakao.maps.Polygon({
+        map: map, path: path, strokeWeight: 5, strokeColor: color,
+        strokeOpacity: 1, strokeStyle: 'solid', fillColor: color, fillOpacity: 0.25, zIndex: 10
+      });
+      overlays.push(poly);
+      var cLat = 0, cLng = 0;
+      zone.vertices.forEach(function(v) { cLat += Number(v.lat); cLng += Number(v.lng); });
+      cLat /= zone.vertices.length; cLng /= zone.vertices.length;
+      var label = new kakao.maps.CustomOverlay({
+        map: map, position: new kakao.maps.LatLng(cLat, cLng), zIndex: 12,
+        content: '<div style="background:' + color + ';padding:3px 9px;border-radius:5px;font-size:12px;font-weight:800;color:#fff;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.25);pointer-events:none">' + (zone.zoneName || zone.zoneId || '') + '</div>'
+      });
+      overlays.push(label);
+    });
+  }
+
+  function fitBbox(b) {
+    try {
+      var sw = new kakao.maps.LatLng(b.minLat, b.minLng);
+      var ne = new kakao.maps.LatLng(b.maxLat, b.maxLng);
+      map.setBounds(new kakao.maps.LatLngBounds(sw, ne), 40, 40, 40, 40);
+    } catch (e) {}
+  }
+
+  function applyInit(p) {
+    if (!p) return;
+    if (p.zones) renderZones(p.zones);
+    if (p.bbox) setTimeout(function() { fitBbox(p.bbox); }, 60);
+  }
+
+  // 1) URL 해시로 초기 데이터 수신 (팝업 opener 통신 불안정 대비 1차 경로)
+  (function readHash() {
+    try {
+      var h = location.hash || '';
+      var m = h.match(/capinit=([^&]+)/);
+      if (m) applyInit(JSON.parse(decodeURIComponent(m[1])));
+    } catch (e) {}
+  })();
+
+  // 2) opener → 팝업 postMessage (2차 경로)
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (!d || d.type !== 'captureInit') return;
+    applyInit(d);
+  });
+
+  // opener에게 준비 완료 통지 (opener가 postMessage로 초기화하려는 경우)
+  try { if (window.opener) window.opener.postMessage({ type: 'captureReady' }, '*'); } catch (e) {}
+
+  function _sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  async function doCapture() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      alert('이 브라우저는 화면 캡처(getDisplayMedia)를 지원하지 않습니다.');
+      return;
+    }
+    var bar = document.getElementById('bar');
+    var hint = document.getElementById('hint');
+    var stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 3, displaySurface: 'browser' }, audio: false, preferCurrentTab: true
+      });
+    } catch (err) {
+      alert('화면 캡처가 취소되었거나 차단되었습니다.\n' + (err && err.message || err));
+      return;
+    }
+    try {
+      var video = document.createElement('video');
+      video.srcObject = stream; video.muted = true;
+      await video.play();
+      // 오버레이(툴바/힌트)를 숨겨 캡처 픽셀에서 제외
+      bar.style.visibility = 'hidden';
+      hint.style.visibility = 'hidden';
+      await _sleep(450); // DOM 숨김이 스트림 프레임에 반영될 시간
+      var vw = video.videoWidth || window.innerWidth;
+      var vh = video.videoHeight || window.innerHeight;
+      var canvas = document.createElement('canvas');
+      canvas.width = vw; canvas.height = vh;
+      canvas.getContext('2d').drawImage(video, 0, 0, vw, vh);
+      var dataUrl = canvas.toDataURL('image/png');
+      // 지도 경계(현재 뷰포트 = 전체 지도) → 정확한 위경도
+      var gb = map.getBounds();
+      var sw = gb.getSouthWest(), ne = gb.getNorthEast();
+      var bounds = { minLat: sw.getLat(), minLng: sw.getLng(), maxLat: ne.getLat(), maxLng: ne.getLng() };
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      bar.style.visibility = ''; hint.style.visibility = '';
+
+      var sent = false;
+      try {
+        if (window.opener) {
+          window.opener.postMessage({ type: 'captureResult', dataUrl: dataUrl, bounds: bounds }, '*');
+          sent = true;
+        }
+      } catch (e) {}
+
+      if (sent) {
+        hint.innerHTML = '✅ 캡처 완료! 원래 창으로 돌아가 <b>정렬 확인 후 저장</b>하세요. (이 창은 닫아도 됩니다)';
+        hint.style.background = 'rgba(16,163,74,.92)';
+      } else {
+        // opener 통신 불가 → 다운로드 폴백
+        var a = document.createElement('a');
+        a.href = dataUrl; a.download = 'yard_satellite.png';
+        a.id = 'dl'; a.textContent = '⬇ 이미지 다운로드';
+        hint.innerHTML = '원래 창으로 자동 전송이 불가합니다. ';
+        hint.appendChild(a);
+        hint.insertAdjacentHTML('beforeend', ' 후 "이미지 파일 업로드"로 넣으세요.<br>경계: ' +
+          bounds.minLat.toFixed(6) + ',' + bounds.minLng.toFixed(6) + ' ~ ' + bounds.maxLat.toFixed(6) + ',' + bounds.maxLng.toFixed(6));
+        hint.style.background = 'rgba(202,138,4,.92)';
+      }
+    } catch (err) {
+      try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      bar.style.visibility = ''; hint.style.visibility = '';
+      alert('캡처 처리 실패: ' + (err && err.message || err));
+    }
+  }
+  window.doCapture = doCapture;
+</script>
+</body>
+</html>
