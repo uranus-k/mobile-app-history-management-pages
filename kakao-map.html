@@ -49,7 +49,6 @@
     #yard-name-overlay.visible { display:flex; }
   </style>
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=f95e6bfd50bbf2a72472a4248d6582a9&libraries=services"></script>
-  <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.js"></script>
 </head>
 <body>
 <div id="map"></div>
@@ -71,14 +70,6 @@
     level: 5,
     mapTypeId: kakao.maps.MapTypeId.HYBRID
   });
-  // 고정 화면에서도 적치장 중심으로 확대/축소할 수 있게 +/- 줌 버튼 추가
-  try { map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT); } catch (e) {}
-  // 뷰 맵: 마우스 드래그(손바닥)로 이동 + 휠 스크롤로 확대/축소 모두 허용.
-  // 자동 복귀/리셋 없음 — 사용자가 본 위치/배율 그대로 유지. (적치장 영역은 처음 로드 시 1회만 맞춤)
-  function setMapInteractive(on) {
-    try { map.setDraggable(!!on); map.setZoomable(!!on); } catch (e) {}
-  }
-  setMapInteractive(true);
   var marker = null;
   var originForPost = '*';
   var drawingActive = false;
@@ -86,7 +77,6 @@
   var drawMode = 'zone'; // 'yard' | 'zone'
   var yardPolygonGuide = null;
   var yardVerticesGuide = [];
-  var drawExistingZonesData = [];  // 그리기 중 겹침 클리핑 기준이 되는 기존 세부구역
   // ── 뷰 모드 (배경 지도 전용) ──────────────────────────────
   var viewPolygons = []; // 뷰 모드에서 그려진 다각형/라벨 오버레이
   var viewPolyMap  = {}; // {zoneId → {poly, label}} 블링크 접근용
@@ -134,26 +124,17 @@
     return inside;
   }
 
-  // 그리기 중 기존 세부구역을 옅게 보여주는 가이드 폴리곤
-  var drawGuideZones = [];
-  function clearDrawGuideZones() {
-    drawGuideZones.forEach(function(o) { if (o && o.setMap) o.setMap(null); });
-    drawGuideZones = [];
-  }
-
   // ─── 드로잉 시작 ─────────────────────────────────────────
-  function startDrawMode(mode, yardVertices, existingZones) {
+  function startDrawMode(mode, yardVertices) {
     drawMode = mode || 'zone';
-    drawExistingZonesData = (existingZones || []).filter(function(z) { return z && z.vertices && z.vertices.length >= 3; });
     drawingActive = true;
     editingActive = false;
-    // 그리기 모드: 상호작용 복원 + 흰색 레이어 숨김 (선명한 위성지도)
-    setMapInteractive(true);
+    // 그리기 모드: 팬 복원 + 흰색 레이어 숨김 (선명한 위성지도)
+    map.setDraggable(true);
     var fader = document.getElementById('map-fader');
     if (fader) fader.style.display = 'none';
     clearDrawing();
     clearEditMarkers();
-    clearDrawGuideZones();
 
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = yardVertices || [];
@@ -165,28 +146,6 @@
         fillColor: '#F59E0B', fillOpacity: 0
       });
       map.setCenter(path[0]);
-    }
-
-    // 이미 정의된 세부구역을 옅게 표시 — 어디까지 그렸는지 보이도록 (겹침 회피 가이드)
-    if (drawMode === 'zone' && existingZones && existingZones.length) {
-      existingZones.forEach(function(z) {
-        if (!z || !z.vertices || z.vertices.length < 3) return;
-        var zp = z.vertices.map(function(v) { return new kakao.maps.LatLng(v.lat, v.lng); });
-        var gp = new kakao.maps.Polygon({
-          map: map, path: zp, zIndex: 1,
-          strokeWeight: 2, strokeColor: '#2563EB', strokeOpacity: .95, strokeStyle: 'solid',
-          fillColor: '#2563EB', fillOpacity: .18
-        });
-        drawGuideZones.push(gp);
-        var cLat = 0, cLng = 0;
-        z.vertices.forEach(function(v) { cLat += v.lat; cLng += v.lng; });
-        var lbl = new kakao.maps.CustomOverlay({
-          map: map, position: new kakao.maps.LatLng(cLat / z.vertices.length, cLng / z.vertices.length),
-          yAnchor: .5, zIndex: 2,
-          content: '<div style="background:rgba(37,99,235,.92);color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px;white-space:nowrap;pointer-events:none">' + (z.zoneName || z.zoneId || '') + '</div>'
-        });
-        drawGuideZones.push(lbl);
-      });
     }
 
     setDrawMode();
@@ -248,38 +207,6 @@
   }
 
   // ─── 확정 저장 ───────────────────────────────────────────
-  // ─── 겹침 자동 클리핑 (기존 세부구역 우선 — 겹치는 부분은 잘라냄) ───
-  function _zoneRing(verts) { return verts.map(function(v) { return [Number(v.lng), Number(v.lat)]; }); }
-  function _ringSignedArea(ring) {
-    var a = 0;
-    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
-    }
-    return a / 2;
-  }
-  function clipZoneAgainstExisting(vertices) {
-    if (typeof polygonClipping === 'undefined') return { ok: true, vertices: vertices };
-    var subs = (drawExistingZonesData || []).filter(function(z) { return z && z.vertices && z.vertices.length >= 3; });
-    if (!subs.length) return { ok: true, vertices: vertices };
-    try {
-      var subject = [_zoneRing(vertices)];
-      var clips = subs.map(function(z) { return [_zoneRing(z.vertices)]; });
-      var diff = polygonClipping.difference.apply(null, [subject].concat(clips));
-      if (!diff || !diff.length) return { ok: false, vertices: null }; // 기존 구역과 완전히 겹침
-      var best = null, bestA = -1;
-      diff.forEach(function(poly) {
-        var outer = poly[0];
-        var a = Math.abs(_ringSignedArea(outer));
-        if (a > bestA) { bestA = a; best = outer; }
-      });
-      if (!best || best.length < 4) return { ok: true, vertices: vertices };
-      var out = best.map(function(p) { return { lat: p[1], lng: p[0] }; });
-      if (out.length > 1) { var f = out[0], l = out[out.length - 1]; if (f.lat === l.lat && f.lng === l.lng) out.pop(); }
-      if (out.length < 3) return { ok: true, vertices: vertices };
-      return { ok: true, vertices: out, clipped: (out.length !== vertices.length) };
-    } catch (e) { return { ok: true, vertices: vertices }; }
-  }
-
   function confirmPolygon() {
     var vertices = editMarkers.map(function(m, idx) {
       var p = m.getPosition();
@@ -294,15 +221,6 @@
         alert('세부구역은 적치장 경계 안쪽에만 저장할 수 있습니다. 밖으로 나간 점을 안쪽으로 옮겨주세요.');
         return;
       }
-    }
-    // 기존 세부구역과 겹치는 부분 자동 클리핑
-    if (drawMode === 'zone') {
-      var clip = clipZoneAgainstExisting(vertices);
-      if (!clip.ok) {
-        alert('이 영역은 기존 구역과 완전히 겹쳐 저장할 수 없습니다. 겹치지 않는 위치에 그려주세요.');
-        return;
-      }
-      vertices = clip.vertices.map(function(v, idx) { return { seq: idx + 1, lat: v.lat, lng: v.lng }; });
     }
     var type = (drawMode === 'yard') ? 'KAKAO_YARD_DRAW_END' : 'KAKAO_ZONE_DRAW_END';
     notifyParent({ type: type, data: vertices });
@@ -326,10 +244,8 @@
     editingActive = false;
     clearEditMarkers();
     clearDrawing();
-    clearDrawGuideZones();
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = [];
-    setMapInteractive(true);  // 그리기 종료 → 뷰 상호작용 유지
     setDrawMode();
     document.getElementById('draw-toolbar').classList.remove('visible');
     document.getElementById('draw-count').classList.remove('visible');
@@ -400,8 +316,9 @@
     viewPolygons = [];
     viewPolyMap  = {};
     if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
-    // 뷰 모드: 마우스 이동·휠 확대/축소 허용 (자동 복귀 없음)
-    setMapInteractive(true);
+    // 뷰 모드: 드래그 이동 + 스크롤 줌 모두 허용
+    map.setDraggable(true);
+    map.setZoomable(true);
     // 위성지도 타일만 연하게: 타일 레이어(z-index≈100) 위, 폴리곤 오버레이(z-index≈200) 아래에 흰색 레이어 삽입
     var fader = document.getElementById('map-fader');
     if (!fader) {
@@ -463,12 +380,12 @@
       var poly = new kakao.maps.Polygon({
         map: map,
         path: path,
-        strokeWeight: 2,
+        strokeWeight: 5,
         strokeColor: color,
         strokeOpacity: 1,
         strokeStyle: 'solid',
         fillColor: color,
-        fillOpacity: 0.42,
+        fillOpacity: 0.25,
         zIndex: 10
       });
       kakao.maps.event.addListener(poly, 'click', function() {
@@ -507,7 +424,7 @@
       _yardBounds = null;
     }
     try {
-      map.setBounds(bounds, 64);
+      map.setBounds(bounds, 40);
     } catch(e) {}
   }
 
@@ -597,7 +514,7 @@
     if (!d || !d.type) return;
     originForPost = e.origin || '*';
     if (d.type === 'startKakaoDrawing' || d.type === 'enterDrawMode') {
-      startDrawMode(d.mode, d.yardVertices, d.existingZones);
+      startDrawMode(d.mode, d.yardVertices);
     } else if (d.type === 'exitDrawMode') {
       cancelDrawing();
     } else if (d.type === 'moveTo') {
@@ -611,7 +528,10 @@
       if (d.bbox) {
         var sw = new kakao.maps.LatLng(d.bbox.minLat, d.bbox.minLng);
         var ne = new kakao.maps.LatLng(d.bbox.maxLat, d.bbox.maxLng);
-        map.setBounds(new kakao.maps.LatLngBounds(sw, ne), 64);
+        var _bounds = new kakao.maps.LatLngBounds(sw, ne);
+        map.relayout();
+        map.setBounds(_bounds, 10, 10, 10, 10);
+        setTimeout(function() { map.relayout(); map.setBounds(_bounds, 10, 10, 10, 10); }, 150);
       } else if (d.lat && d.lng) {
         map.setCenter(new kakao.maps.LatLng(d.lat, d.lng));
         if (d.level) map.setLevel(d.level);
