@@ -481,6 +481,21 @@
     } catch(e) {}
   }
 
+  var buildingPolys = [];
+  function renderBuildings(buildings) {
+    buildingPolys.forEach(function(o){ try{ o.setMap(null); }catch(e){} });
+    buildingPolys = [];
+    (buildings || []).forEach(function(b){
+      if (!b.vertices || b.vertices.length < 3) return;
+      var path = b.vertices.map(function(v){ return new kakao.maps.LatLng(Number(v.lat), Number(v.lng)); });
+      var poly = new kakao.maps.Polygon({
+        map: map, path: path, strokeWeight: 3, strokeColor: '#94A3B8',
+        strokeOpacity: 0.9, strokeStyle: 'shortdash', fillColor: '#64748B', fillOpacity: 0.25, zIndex: 2
+      });
+      buildingPolys.push(poly);
+    });
+  }
+
   // ── 뷰맵 구역 꼭짓점 인라인 편집 ────────────────────────────
   // ── 야드 경계 꼭짓점 인라인 편집 (뷰맵) ─────────────────────
   function startYardEdit(vertices) {
@@ -583,6 +598,8 @@
       setTimeout(function() { map.relayout(); }, 40);
     } else if (d.type === 'renderViewZones') {
       renderViewZones(d.zones || []);
+    } else if (d.type === 'renderBuildings') {
+      renderBuildings(d.buildings || []);
     } else if (d.type === 'viewCenter') {
       if (d.bbox) {
         var sw = new kakao.maps.LatLng(d.bbox.minLat, d.bbox.minLng);
