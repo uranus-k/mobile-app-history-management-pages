@@ -71,6 +71,7 @@
 <div id="draw-toolbar">
   <span id="hint-draw"><b>구역 지정</b> 꼭짓점을 순서대로 클릭한 뒤 완료를 누르세요.</span>
   <span id="hint-edit" style="display:none"><b>편집 모드</b> 꼭짓점을 드래그하여 조정하세요.</span>
+  <button id="draw-ortho-btn"   class="draw-btn" style="background:#475569" onclick="toggleOrtho()">⊾ 직각 OFF</button>
   <button id="draw-done-btn"    class="draw-btn" onclick="finishDrawing()">그리기 완료</button>
   <button id="draw-cancel-btn"  class="draw-btn" onclick="cancelDrawing()">취소</button>
   <button id="draw-confirm-btn" class="draw-btn" style="display:none" onclick="confirmPolygon()">✓ 확정 저장</button>
@@ -317,6 +318,7 @@
     drawMarkers = [];
     if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
     if (drawPolygon)  { drawPolygon.setMap(null);  drawPolygon  = null; }
+    hideSnapPreview();
     updateDrawCount();
   }
 
@@ -358,6 +360,93 @@
     if (box) box.textContent = '꼭짓점 ' + drawVertices.length + '개';
   }
 
+  // ══ 그리기 스냅(인접 영역) + 직각 보정 ═══════════════════════
+  var orthoMode = false;         // 직각 보정 (토글, 기본 OFF — 자동 아님)
+  var viewZoneRings = [];        // 기존 구역/야드 링 [{lat,lng},...]
+  var snapPreview = null;        // 스냅 지점 초록 미리보기
+  var SNAP_PX = 14;              // 스냅 임계(픽셀)
+
+  function _projPt(ll) { try { return map.getProjection().pointFromCoords(ll); } catch (e) { return null; } }
+  function _projLL(x, y) { try { return map.getProjection().coordsFromPoint(new kakao.maps.Point(x, y)); } catch (e) { return null; } }
+
+  function _snapRings() {
+    var rings = viewZoneRings.slice();
+    if (yardVerticesGuide && yardVerticesGuide.length >= 3) {
+      rings.push(yardVerticesGuide.map(function (v) { return { lat: +v.lat, lng: +v.lng }; }));
+    }
+    return rings;
+  }
+
+  // 기존 구역/야드의 꼭짓점·변에 스냅 (픽셀 임계 이내)
+  function snapToExisting(latlng) {
+    var cp = _projPt(latlng);
+    if (!cp) return { latlng: latlng, snapped: false };
+    var rings = _snapRings();
+    var best = null, bestD = SNAP_PX;
+    // 1) 꼭짓점 우선
+    rings.forEach(function (ring) {
+      ring.forEach(function (v) {
+        var p = _projPt(new kakao.maps.LatLng(v.lat, v.lng)); if (!p) return;
+        var d = Math.sqrt((p.x - cp.x) * (p.x - cp.x) + (p.y - cp.y) * (p.y - cp.y));
+        if (d < bestD) { bestD = d; best = new kakao.maps.LatLng(v.lat, v.lng); }
+      });
+    });
+    if (best) return { latlng: best, snapped: true };
+    // 2) 변(edge)에 투영
+    var bestE = null, bestED = SNAP_PX;
+    rings.forEach(function (ring) {
+      for (var i = 0; i < ring.length; i++) {
+        var a = ring[i], b = ring[(i + 1) % ring.length];
+        var pa = _projPt(new kakao.maps.LatLng(a.lat, a.lng)), pb = _projPt(new kakao.maps.LatLng(b.lat, b.lng));
+        if (!pa || !pb) continue;
+        var dx = pb.x - pa.x, dy = pb.y - pa.y, len2 = dx * dx + dy * dy;
+        var t = len2 ? ((cp.x - pa.x) * dx + (cp.y - pa.y) * dy) / len2 : -1;
+        if (t < 0 || t > 1) continue;
+        var qx = pa.x + t * dx, qy = pa.y + t * dy;
+        var d = Math.sqrt((qx - cp.x) * (qx - cp.x) + (qy - cp.y) * (qy - cp.y));
+        if (d < bestED) { bestED = d; bestE = { x: qx, y: qy }; }
+      }
+    });
+    if (bestE) { var ll = _projLL(bestE.x, bestE.y); if (ll) return { latlng: ll, snapped: true }; }
+    return { latlng: latlng, snapped: false };
+  }
+
+  // 직각 보정: 직전 변에 대해 평행/수직 (점 2개 이상 필요)
+  function applyOrtho(latlng) {
+    if (!orthoMode || drawVertices.length < 2) return latlng;
+    var n = drawVertices.length, a = drawVertices[n - 2], b = drawVertices[n - 1];
+    var pa = _projPt(new kakao.maps.LatLng(a.lat, a.lng)), pb = _projPt(new kakao.maps.LatLng(b.lat, b.lng)), pc = _projPt(latlng);
+    if (!pa || !pb || !pc) return latlng;
+    var dx = pb.x - pa.x, dy = pb.y - pa.y, L = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / L, uy = dy / L, px = -uy, py = ux;
+    var vx = pc.x - pb.x, vy = pc.y - pb.y;
+    var along = vx * ux + vy * uy, perp = vx * px + vy * py, nx, ny;
+    if (Math.abs(along) >= Math.abs(perp)) { nx = pb.x + ux * along; ny = pb.y + uy * along; }
+    else { nx = pb.x + px * perp; ny = pb.y + py * perp; }
+    var ll = _projLL(nx, ny); return ll || latlng;
+  }
+
+  // 스냅 우선 → 없으면 직각 보정
+  function computeDrawPoint(latlng) {
+    var s = snapToExisting(latlng);
+    if (s.snapped) return { latlng: s.latlng, snapped: true };
+    return { latlng: applyOrtho(latlng), snapped: false };
+  }
+
+  function showSnapPreview(latlng, snapped) {
+    if (!snapPreview) snapPreview = new kakao.maps.CustomOverlay({ position: latlng, yAnchor: .5, xAnchor: .5, zIndex: 65 });
+    snapPreview.setContent('<div style="width:16px;height:16px;border-radius:50%;background:' + (snapped ? '#22C55E' : 'rgba(34,197,94,.35)') + ';border:2px solid #fff;box-shadow:0 0 0 2px ' + (snapped ? '#15803D' : 'rgba(34,197,94,.5)') + '"></div>');
+    snapPreview.setPosition(latlng);
+    snapPreview.setMap(map);
+  }
+  function hideSnapPreview() { if (snapPreview) snapPreview.setMap(null); }
+
+  function toggleOrtho() {
+    orthoMode = !orthoMode;
+    var btn = document.getElementById('draw-ortho-btn');
+    if (btn) { btn.textContent = orthoMode ? '⊾ 직각 ON' : '⊾ 직각 OFF'; btn.style.background = orthoMode ? '#7C3AED' : '#475569'; }
+  }
+
   function notifyParent(data) {
     window.parent.postMessage(data, originForPost || '*');
   }
@@ -368,6 +457,9 @@
     viewPolygons.forEach(function(o) { o.setMap(null); });
     viewPolygons = [];
     viewPolyMap  = {};
+    // 그리기 스냅용 기존 구역/야드 링 저장
+    viewZoneRings = (zones || []).filter(function(z){ return z.vertices && z.vertices.length >= 2; })
+      .map(function(z){ return z.vertices.map(function(v){ return { lat: +v.lat, lng: +v.lng }; }); });
     if (_blinkTimer) { clearInterval(_blinkTimer); _blinkTimer = null; }
     // 뷰 모드: 드래그 이동 + 스크롤 줌 모두 허용
     map.setDraggable(true);
@@ -667,14 +759,16 @@
     }
 
     if (drawingActive) {
-      var lat = latlng.getLat(), lng = latlng.getLng();
+      var snap = computeDrawPoint(latlng);
+      var sll = snap.latlng;
+      var lat = sll.getLat(), lng = sll.getLng();
       if (drawMode === 'zone' && yardVerticesGuide.length >= 3) {
         if (!isPointInPolygon(lat, lng, yardVerticesGuide)) {
           alert('꼭짓점은 전체 적치장(Yard) 영역 내부에만 지정할 수 있습니다.');
           return;
         }
       }
-      addDrawVertex(latlng);
+      addDrawVertex(sll);
       return;
     }
 
@@ -683,6 +777,13 @@
     placeMarker(lat, lng);
     reverseGeocode(lat, lng);
     notifyParent({ type: 'coords', lat: lat, lng: lng });
+  });
+
+  // ── 그리기 중 스냅 지점 미리보기 ──────────────────────────
+  kakao.maps.event.addListener(map, 'mousemove', function(me) {
+    if (!drawingActive) { hideSnapPreview(); return; }
+    var cp = computeDrawPoint(me.latLng);
+    showSnapPreview(cp.latlng, cp.snapped);
   });
 
   // ── 드래그 범위 제한 (야드 bbox 2x 패딩 초과 시 복귀) ───────
