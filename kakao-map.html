@@ -318,7 +318,7 @@
     drawMarkers = [];
     if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
     if (drawPolygon)  { drawPolygon.setMap(null);  drawPolygon  = null; }
-    hideSnapPreview();
+    hidePreviewAll();
     updateDrawCount();
   }
 
@@ -363,14 +363,19 @@
   // ══ 그리기 스냅(인접 영역) + 직각 보정 ═══════════════════════
   var orthoMode = false;         // 직각 보정 (토글, 기본 OFF — 자동 아님)
   var viewZoneRings = [];        // 기존 구역/야드 링 [{lat,lng},...]
+  var buildingRings = [];        // 기존 건물 링 (스냅 대상)
   var snapPreview = null;        // 스냅 지점 초록 미리보기
+  var previewLine = null;        // 직전 꼭짓점→커서 미리보기 선
+  var alignBadge  = null;        // 직선/직각 정렬 배지
   var SNAP_PX = 14;              // 스냅 임계(픽셀)
+  var ANGLE_TOL = 6;             // 직선/직각 소프트스냅 허용 각도(도)
 
   function _projPt(ll) { try { return map.getProjection().pointFromCoords(ll); } catch (e) { return null; } }
   function _projLL(x, y) { try { return map.getProjection().coordsFromPoint(new kakao.maps.Point(x, y)); } catch (e) { return null; } }
 
   function _snapRings() {
     var rings = viewZoneRings.slice();
+    buildingRings.forEach(function (r) { rings.push(r); }); // 건물도 스냅 대상
     if (yardVerticesGuide && yardVerticesGuide.length >= 3) {
       rings.push(yardVerticesGuide.map(function (v) { return { lat: +v.lat, lng: +v.lng }; }));
     }
@@ -426,11 +431,42 @@
     var ll = _projLL(nx, ny); return ll || latlng;
   }
 
-  // 스냅 우선 → 없으면 직각 보정
+  // 직선/직각 소프트스냅: 직전 변 기준 0/90° 또는 수평/수직에 가까우면(ANGLE_TOL 이내) 반듯하게 보정
+  function straightGuide(latlng) {
+    if (drawVertices.length < 1) return { latlng: latlng, aligned: false };
+    var n = drawVertices.length, last = drawVertices[n - 1];
+    var pl = _projPt(new kakao.maps.LatLng(last.lat, last.lng)), pc = _projPt(latlng);
+    if (!pl || !pc) return { latlng: latlng, aligned: false };
+    var vx = pc.x - pl.x, vy = pc.y - pl.y, len = Math.sqrt(vx * vx + vy * vy);
+    if (len < 2) return { latlng: latlng, aligned: false };
+    var cands = [];
+    if (n >= 2) { // 직전 변 방향 기준 평행/수직
+      var a = drawVertices[n - 2], pa = _projPt(new kakao.maps.LatLng(a.lat, a.lng));
+      if (pa) {
+        var dx = pl.x - pa.x, dy = pl.y - pa.y, L = Math.sqrt(dx * dx + dy * dy) || 1, ux = dx / L, uy = dy / L;
+        cands.push({ x: ux, y: uy, kind: 'ortho' }, { x: -uy, y: ux, kind: 'ortho' }, { x: -ux, y: -uy, kind: 'ortho' }, { x: uy, y: -ux, kind: 'ortho' });
+      }
+    }
+    cands.push({ x: 1, y: 0, kind: 'hv' }, { x: 0, y: 1, kind: 'hv' }, { x: -1, y: 0, kind: 'hv' }, { x: 0, y: -1, kind: 'hv' }); // 수평/수직(E-W/N-S)
+    var best = null, bestAng = ANGLE_TOL * Math.PI / 180, cxu = vx / len, cyu = vy / len;
+    cands.forEach(function (c) {
+      var dot = Math.max(-1, Math.min(1, cxu * c.x + cyu * c.y));
+      var ang = Math.acos(dot);
+      if (ang < bestAng) { bestAng = ang; best = c; }
+    });
+    if (!best) return { latlng: latlng, aligned: false };
+    var along = vx * best.x + vy * best.y;
+    var ll = _projLL(pl.x + best.x * along, pl.y + best.y * along);
+    return { latlng: ll || latlng, aligned: true, kind: best.kind };
+  }
+
+  // 스냅(인접) 우선 → 직각토글 ON이면 강제 직각 → 아니면 직선/직각 소프트스냅
   function computeDrawPoint(latlng) {
     var s = snapToExisting(latlng);
-    if (s.snapped) return { latlng: s.latlng, snapped: true };
-    return { latlng: applyOrtho(latlng), snapped: false };
+    if (s.snapped) return { latlng: s.latlng, snapped: true, aligned: false };
+    if (orthoMode) return { latlng: applyOrtho(latlng), snapped: false, aligned: true, kind: 'ortho' };
+    var g = straightGuide(latlng);
+    return { latlng: g.latlng, snapped: false, aligned: g.aligned, kind: g.kind };
   }
 
   function showSnapPreview(latlng, snapped) {
@@ -439,7 +475,31 @@
     snapPreview.setPosition(latlng);
     snapPreview.setMap(map);
   }
+
+  // 미리보기: 스냅 점 + 직전 꼭짓점→커서 선 + 직선/직각 배지
+  function showPreview(cp) {
+    var aligned = cp.aligned || cp.snapped;
+    showSnapPreview(cp.latlng, cp.snapped);
+    if (drawVertices.length >= 1) {
+      var lv = drawVertices[drawVertices.length - 1];
+      var path = [new kakao.maps.LatLng(lv.lat, lv.lng), cp.latlng];
+      if (previewLine) previewLine.setMap(null);
+      previewLine = new kakao.maps.Polyline({
+        map: map, path: path, strokeWeight: 2, strokeOpacity: .95,
+        strokeColor: aligned ? '#22C55E' : '#F59E0B', strokeStyle: aligned ? 'solid' : 'shortdash'
+      });
+      if (cp.aligned) {
+        if (!alignBadge) alignBadge = new kakao.maps.CustomOverlay({ position: cp.latlng, yAnchor: 1.8, xAnchor: .5, zIndex: 66 });
+        alignBadge.setContent('<div style="background:#15803D;color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)">' + (cp.kind === 'hv' ? '─ 직선' : '⊾ 직각') + '</div>');
+        alignBadge.setPosition(cp.latlng); alignBadge.setMap(map);
+      } else if (alignBadge) { alignBadge.setMap(null); }
+    } else {
+      if (previewLine) previewLine.setMap(null);
+      if (alignBadge) alignBadge.setMap(null);
+    }
+  }
   function hideSnapPreview() { if (snapPreview) snapPreview.setMap(null); }
+  function hidePreviewAll() { hideSnapPreview(); if (previewLine) previewLine.setMap(null); if (alignBadge) alignBadge.setMap(null); }
 
   function toggleOrtho() {
     orthoMode = !orthoMode;
@@ -577,6 +637,8 @@
   function renderBuildings(buildings) {
     buildingPolys.forEach(function(o){ try{ o.setMap(null); }catch(e){} });
     buildingPolys = [];
+    buildingRings = (buildings || []).filter(function(b){ return b.vertices && b.vertices.length >= 2; })
+      .map(function(b){ return b.vertices.map(function(v){ return { lat: +v.lat, lng: +v.lng }; }); });
     (buildings || []).forEach(function(b){
       if (!b.vertices || b.vertices.length < 3) return;
       var path = b.vertices.map(function(v){ return new kakao.maps.LatLng(Number(v.lat), Number(v.lng)); });
@@ -781,9 +843,9 @@
 
   // ── 그리기 중 스냅 지점 미리보기 ──────────────────────────
   kakao.maps.event.addListener(map, 'mousemove', function(me) {
-    if (!drawingActive) { hideSnapPreview(); return; }
+    if (!drawingActive) { hidePreviewAll(); return; }
     var cp = computeDrawPoint(me.latLng);
-    showSnapPreview(cp.latlng, cp.snapped);
+    showPreview(cp);
   });
 
   // ── 드래그 범위 제한 (야드 bbox 2x 패딩 초과 시 복귀) ───────
