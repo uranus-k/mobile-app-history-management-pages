@@ -179,8 +179,26 @@
     map.setCenter(new kakao.maps.LatLng(lat, lng));
   }
 
+  // ─── 그리기 참고용 기존 구역/건물 표시 ────────────────────
+  var drawRefPolys = [];
+  function _clearRefShapes() { drawRefPolys.forEach(function(o){ try{ o.setMap(null); }catch(e){} }); drawRefPolys = []; }
+  function _drawRefShapes(zones, buildings) {
+    _clearRefShapes();
+    (zones || []).forEach(function(z){
+      if (!z.vertices || z.vertices.length < 3) return;
+      var path = z.vertices.map(function(v){ return new kakao.maps.LatLng(+v.lat, +v.lng); });
+      var col = z.color || '#3B82F6';
+      drawRefPolys.push(new kakao.maps.Polygon({ map: map, path: path, strokeWeight: 3, strokeColor: col, strokeOpacity: .9, strokeStyle: 'solid', fillColor: col, fillOpacity: .12, zIndex: 1 }));
+    });
+    (buildings || []).forEach(function(b){
+      if (!b.vertices || b.vertices.length < 3) return;
+      var path = b.vertices.map(function(v){ return new kakao.maps.LatLng(+v.lat, +v.lng); });
+      drawRefPolys.push(new kakao.maps.Polygon({ map: map, path: path, strokeWeight: 3, strokeColor: '#94A3B8', strokeOpacity: .9, strokeStyle: 'shortdash', fillColor: '#64748B', fillOpacity: .18, zIndex: 1 }));
+    });
+  }
+
   // ─── 드로잉 시작 ─────────────────────────────────────────
-  function startDrawMode(mode, yardVertices) {
+  function startDrawMode(mode, yardVertices, existingZones, existingBuildings) {
     drawMode = mode || 'zone';
     drawingActive = true;
     editingActive = false;
@@ -190,6 +208,13 @@
     if (fader) fader.style.display = 'none';
     clearDrawing();
     clearEditMarkers();
+
+    // 스냅/참고: 기존 구역·건물 (그리기맵에도 표시 + 스냅 대상으로 저장)
+    viewZoneRings = (existingZones || []).filter(function(z){ return z.vertices && z.vertices.length >= 2; })
+      .map(function(z){ return z.vertices.map(function(v){ return { lat:+v.lat, lng:+v.lng }; }); });
+    buildingRings = (existingBuildings || []).filter(function(b){ return b.vertices && b.vertices.length >= 2; })
+      .map(function(b){ return b.vertices.map(function(v){ return { lat:+v.lat, lng:+v.lng }; }); });
+    _drawRefShapes(existingZones, existingBuildings);
 
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = yardVertices || [];
@@ -299,6 +324,7 @@
     editingActive = false;
     clearEditMarkers();
     clearDrawing();
+    _clearRefShapes();
     if (yardPolygonGuide) { yardPolygonGuide.setMap(null); yardPolygonGuide = null; }
     yardVerticesGuide = [];
     setDrawMode();
@@ -820,7 +846,7 @@
     } else if (d.type === 'showGateMarker') {
       placeGateMarker(d.lat, d.lng);
     } else if (d.type === 'startKakaoDrawing' || d.type === 'enterDrawMode') {
-      startDrawMode(d.mode, d.yardVertices);
+      startDrawMode(d.mode, d.yardVertices, d.existingZones, d.existingBuildings);
     } else if (d.type === 'exitDrawMode') {
       cancelDrawing();
     } else if (d.type === 'moveTo') {
