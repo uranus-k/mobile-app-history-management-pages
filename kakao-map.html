@@ -440,6 +440,14 @@
     var vx = pc.x - pl.x, vy = pc.y - pl.y, len = Math.sqrt(vx * vx + vy * vy);
     if (len < 2) return { latlng: latlng, aligned: false };
     var cands = [];
+    if (n >= 3) { // 처음 그린 선(0→1)과 평행/직각인지 감지 (우선)
+      var f0 = drawVertices[0], f1 = drawVertices[1];
+      var pf0 = _projPt(new kakao.maps.LatLng(f0.lat, f0.lng)), pf1 = _projPt(new kakao.maps.LatLng(f1.lat, f1.lng));
+      if (pf0 && pf1) {
+        var fdx = pf1.x - pf0.x, fdy = pf1.y - pf0.y, FL = Math.sqrt(fdx * fdx + fdy * fdy) || 1, fux = fdx / FL, fuy = fdy / FL;
+        cands.push({ x: fux, y: fuy, kind: 'first' }, { x: -fuy, y: fux, kind: 'first' }, { x: -fux, y: -fuy, kind: 'first' }, { x: fuy, y: -fux, kind: 'first' });
+      }
+    }
     if (n >= 2) { // 직전 변 방향 기준 평행/수직
       var a = drawVertices[n - 2], pa = _projPt(new kakao.maps.LatLng(a.lat, a.lng));
       if (pa) {
@@ -490,7 +498,8 @@
       });
       if (cp.aligned) {
         if (!alignBadge) alignBadge = new kakao.maps.CustomOverlay({ position: cp.latlng, yAnchor: 1.8, xAnchor: .5, zIndex: 66 });
-        alignBadge.setContent('<div style="background:#15803D;color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)">' + (cp.kind === 'hv' ? '─ 직선' : '⊾ 직각') + '</div>');
+        var _lbl = cp.kind === 'hv' ? '─ 직선' : (cp.kind === 'first' ? '═ 첫 선과 정렬' : '⊾ 직각');
+        alignBadge.setContent('<div style="background:#15803D;color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.35)">' + _lbl + '</div>');
         alignBadge.setPosition(cp.latlng); alignBadge.setMap(map);
       } else if (alignBadge) { alignBadge.setMap(null); }
     } else {
