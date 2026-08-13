@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PC 대시보드 데모 — 철의장품</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:#0A1628}
+iframe{width:100%;height:100%;border:none;display:block}
+#loader{position:fixed;inset:0;background:#0A1628;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#7A9BB8;font-family:sans-serif;font-size:14px;z-index:999}
+#loader.done{display:none}
+.spin{width:32px;height:32px;border:3px solid rgba(122,155,184,.25);border-top-color:#7A9BB8;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="loader"><div class="spin"></div><span>PC 대시보드 로딩 중...</span></div>
+<iframe id="frame"></iframe>
+<script>
+const _MP2 = [
+  {name:'(주)한국철강',   code:'KS001'},
+  {name:'대우스틸',       code:'DW002'},
+  {name:'포스코파트너스', code:'PC003'}
+];
+const _MD2 = {
+  '현대자동차 아산공장': {address:'충남 아산시 인주면 현암리', lat:36.79, lng:127.01, sourceType:'search'},
+  'LG전자 청주공장':     {address:'충북 청주시 흥덕구 공단로', lat:36.64, lng:127.43, sourceType:'search'},
+  '삼성전자 수원공장':   {address:'경기 수원시 영통구 삼성로', lat:37.26, lng:127.03, sourceType:'search'}
+};
+const _MH2 = [
+  {rowId:1, date:'2026-05-21', partner:'(주)한국철강',   car:'12가3456', depart:'08:30', arrival:'11:20', destination:'현대자동차 아산공장', pallet:5,  materials:[{pno:'P01',mno:'M001',mname:'앵글 L50×50×5',qty:100,unit:'개'},{pno:'P01',mno:'M002',mname:'채널 C100×50×5',qty:50,unit:'개'}], photos:[], note:'정상 납품', deleted:false, delDate:'', registeredBy:'홍길동', registeredTime:'2026-05-21 09:15:00'},
+  {rowId:2, date:'2026-05-21', partner:'대우스틸',        car:'34나5678', depart:'09:15', arrival:'12:30', destination:'LG전자 청주공장',     pallet:3,  materials:[{pno:'P02',mno:'M010',mname:'철판 3.2T',qty:200,unit:'장'}], photos:[], note:'', deleted:false, delDate:'', registeredBy:'김철수', registeredTime:'2026-05-21 10:30:00'},
+  {rowId:3, date:'2026-05-20', partner:'포스코파트너스', car:'56다9012', depart:'07:00', arrival:'10:45', destination:'삼성전자 수원공장',   pallet:8,  materials:[{pno:'P05',mno:'M040',mname:'I빔 150×75',qty:60,unit:'개'},{pno:'P05',mno:'M041',mname:'평철 50×5',qty:150,unit:'개'}], photos:[], note:'지연 도착', deleted:false, delDate:'', registeredBy:'이영희', registeredTime:'2026-05-20 11:00:00'},
+  {rowId:4, date:'2026-05-20', partner:'(주)한국철강',   car:'78라3456', depart:'08:00', arrival:'',      destination:'현대자동차 아산공장', pallet:4,  materials:[{pno:'P03',mno:'M020',mname:'H빔 200×200',qty:30,unit:'개'}], photos:[], note:'', deleted:true, delDate:'2026-05-20', registeredBy:'홍길동', registeredTime:'2026-05-20 08:45:00'},
+  {rowId:5, date:'2026-05-19', partner:'대우스틸',        car:'90마1234', depart:'10:00', arrival:'13:15', destination:'LG전자 청주공장',     pallet:6,  materials:[{pno:'P04',mno:'M030',mname:'T형강 100×100',qty:80,unit:'개'}], photos:[], note:'', deleted:false, delDate:'', registeredBy:'박민준', registeredTime:'2026-05-19 13:20:00'},
+  {rowId:6, date:'2026-05-19', partner:'포스코파트너스', car:'11바5678', depart:'13:00', arrival:'16:30', destination:'삼성전자 수원공장',   pallet:2,  materials:[], photos:[], note:'소량 긴급', deleted:false, delDate:'', registeredBy:'이영희', registeredTime:'2026-05-19 16:45:00'},
+  {rowId:7, date:'2026-05-18', partner:'(주)한국철강',   car:'22사9012', depart:'07:30', arrival:'10:00', destination:'현대자동차 아산공장', pallet:10, materials:[{pno:'P06',mno:'M050',mname:'등변앵글 75×75',qty:200,unit:'개'}], photos:[], note:'', deleted:false, delDate:'', registeredBy:'홍길동', registeredTime:'2026-05-18 10:15:00'},
+  {rowId:8, date:'2026-05-17', partner:'대우스틸',        car:'33아3456', depart:'11:00', arrival:'14:20', destination:'LG전자 청주공장',     pallet:5,  materials:[{pno:'P07',mno:'M060',mname:'스틸 파이프 Ø50',qty:40,unit:'개'}], photos:[], note:'', deleted:false, delDate:'', registeredBy:'김철수', registeredTime:'2026-05-17 14:30:00'}
+];
+
+const _MOCKS_OBJ = {
+  getHistory:          {success:true, data:_MH2},
+  getPartners:         {success:true, data:_MP2},
+  getDeliveryPartners: {success:true, data:_MD2},
+  getSince:            {success:true, data:[]},
+  addPartner:          {success:true},
+  deletePartner:       {success:true},
+  saveRecord:          {success:true},
+  updateRecord:        {success:true},
+  deleteRecord:        {success:true},
+  saveDeliveryPartner: {success:true},
+  recordArrival:       {success:true},
+  recordDeparture:     {success:true},
+  serverLogin: {
+    success: true,
+    token: 'SA_demo_token_mock',
+    userId: 'admin',
+    role: 'Admin',
+    partnerName: '',
+    ocrPerm: true,
+    zonePerm: true
+  },
+  serverVerifyToken: {
+    success: true,
+    userId: 'admin',
+    role: 'Admin',
+    partnerName: '',
+    ocrPerm: true,
+    zonePerm: true
+  },
+  loadZoneVertices:    {success:true, data:{
+    zones: [
+      { zoneId:'Z001', supplierName:'(주)한국철강', zoneName:'A야드 1구역', color:'#3B82F6',
+        vertices:[{seq:1,lat:34.852,lng:128.618},{seq:2,lat:34.852,lng:128.623},
+                  {seq:3,lat:34.856,lng:128.623},{seq:4,lat:34.856,lng:128.618}] },
+      { zoneId:'Z002', supplierName:'대우스틸',     zoneName:'B야드 창고', color:'#F59E0B',
+        vertices:[{seq:1,lat:34.848,lng:128.621},{seq:2,lat:34.848,lng:128.626},
+                  {seq:3,lat:34.851,lng:128.626},{seq:4,lat:34.851,lng:128.621}] }
+    ],
+    buildings: [
+      { buildingId:'B001', yardId:'Y001', name:'본관',
+        vertices:[{lat:34.8503,lng:128.6195},{lat:34.8503,lng:128.6205},
+                  {lat:34.8508,lng:128.6205},{lat:34.8508,lng:128.6195}] }
+    ],
+    racks: [],
+    bbox: {minLat:34.848,maxLat:34.856,minLng:128.618,maxLng:128.626},
+    yard: {
+      yardId: 'Y001',
+      supplierName: '(주)한국철강',
+      yardName: '한국철강 A야드',
+      vertices: [
+        {seq:1, lat:34.846, lng:128.616},
+        {seq:2, lat:34.846, lng:128.628},
+        {seq:3, lat:34.858, lng:128.628},
+        {seq:4, lat:34.858, lng:128.616}
+      ]
+    }
+  }},
+  saveZoneVertices:    {success:true},
+  saveYardVertices:    {success:true},
+  deleteZone:          {success:true},
+  deleteYard:          {success:true},
+  saveYard:            {success:true},
+  addNewZone:          {success:true},
+  saveZone:            {success:true},
+  getStorageData:      {success:true, data:{
+    mapImageUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNTAwIj48cmVjdCB3aWR0aD0iODAwIiBoZWlnaHQ9IjUwMCIgZmlsbD0icmdiKDIyOCwyMzMsMjQwKSIvPjxyZWN0IHg9IjYwIiB5PSI3MCIgd2lkdGg9IjMwMCIgaGVpZ2h0PSIxNTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiKDEyMCwxNDAsMTcwKSIgc3Ryb2tlLXdpZHRoPSI0Ii8+PHJlY3QgeD0iNDUwIiB5PSI3MCIgd2lkdGg9IjI5MCIgaGVpZ2h0PSIxNTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiKDEyMCwxNDAsMTcwKSIgc3Ryb2tlLXdpZHRoPSI0Ii8+PHJlY3QgeD0iNjAiIHk9IjMwMCIgd2lkdGg9IjY4MCIgaGVpZ2h0PSIxNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0icmdiKDEyMCwxNDAsMTcwKSIgc3Ryb2tlLXdpZHRoPSI0Ii8+PC9zdmc+',
+    zones: [
+      { zoneId:'Z001', companyName:'(주)한국철강', zoneName:'A구역', rackCapacity:10, boxLayout:{xPct:26,yPct:29,wPct:16,hPct:15} },
+      { zoneId:'Z002', companyName:'(주)한국철강', zoneName:'B구역', rackCapacity:12, boxLayout:{xPct:74,yPct:29,wPct:16,hPct:15} },
+      { zoneId:'Z003', companyName:'(주)한국철강', zoneName:'C구역', rackCapacity:8,  boxLayout:{xPct:50,yPct:74,wPct:18,hPct:15} }
+    ],
+    items: [
+      {palletId:'PA-1',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},{palletId:'PA-2',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PA-3',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},{palletId:'PA-4',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PA-5',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},{palletId:'PA-6',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PA-7',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},{palletId:'PA-8',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PA-9',zoneId:'Z001',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PB-1',zoneId:'Z002',companyName:'(주)한국철강',status:'적치중'},{palletId:'PB-2',zoneId:'Z002',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PB-3',zoneId:'Z002',companyName:'(주)한국철강',status:'적치중'},{palletId:'PB-4',zoneId:'Z002',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PB-5',zoneId:'Z002',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PC-1',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'},{palletId:'PC-2',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PC-3',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'},{palletId:'PC-4',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'},
+      {palletId:'PC-5',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'},{palletId:'PC-6',zoneId:'Z003',companyName:'(주)한국철강',status:'적치중'}
+    ],
+    yards: []
+  }},
+  savePartnerMap:      {success:true},
+  savePartnerMapImage: {success:true, mapImageUrl:'drive:MOCKFILEID'},
+  getPartnerMapImage:  {success:true, mapImageUrl:'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNTAwIj48cmVjdCB3aWR0aD0iODAwIiBoZWlnaHQ9IjUwMCIgZmlsbD0icmdiKDIxNSwyMjgsMjE1KSIvPjx0ZXh0IHg9IjQwMCIgeT0iMjYwIiBmb250LXNpemU9IjM0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSJyZ2IoNjAsMTIwLDcwKSI+VVBMT0FERUQgUExBTjwvdGV4dD48L3N2Zz4='},
+  getRacks:            {success:true, data:[]},
+  saveRack:            {success:true},
+  deleteRack:          {success:true},
+  saveRackPosition:    {success:true},
+  updateStorageLocation: {success:true},
+  deleteStorageItem:   {success:true},
+  assignRackCell:      {success:true},
+  clearRackCell:       {success:true},
+  searchPalletInRacks: {success:true, data:null},
+  getYardBackground:   {success:true, data:null},
+  saveYardBackground:  {success:true},
+  saveBuilding:        {success:true},
+  deleteBuilding:      {success:true},
+  getActiveAIModel:    {success:true, model:'meta-llama/llama-3.2-3b-instruct:free'},
+  setActiveAIModel:    {success:true, model:'meta-llama/llama-3.2-3b-instruct:free'}
+};
+
+const _MOCK2 = `<script>
+  localStorage.setItem('gas_url',   'https://demo.mock.local/exec');
+  localStorage.setItem('gas_token', 'demo_token_2024');
+  (function(){
+    const _orig = window.fetch.bind(window);
+    const MOCKS = ${JSON.stringify(_MOCKS_OBJ)};
+    window.fetch = async function(url, opts){
+      const s = typeof url === 'string' ? url : url.toString();
+      if (!s.includes('demo.mock.local')) return _orig(url, opts);
+      let action = '';
+      if (s.includes('?')) { action = new URLSearchParams(s.split('?')[1]).get('action') || ''; }
+      if (!action && opts && opts.body) { try { action = JSON.parse(opts.body).action || ''; } catch(e){} }
+      const r = MOCKS[action] || {success:true, data:[]};
+      return new Response(JSON.stringify({...r, rowId: Date.now()}),
+        {status:200, headers:{'Content-Type':'application/json'}});
+    };
+  })();
+<\/script>`;
+
+fetch('../GAS/pc.html', {cache:'no-store'})
+  .then(r => r.text())
+  .then(html => {
+    const idx = html.indexOf('<script');
+    const patched = html.slice(0, idx) + _MOCK2 + html.slice(idx);
+    const blob = new Blob([patched], {type:'text/html'});
+    document.getElementById('frame').src = URL.createObjectURL(blob);
+    document.getElementById('frame').onload = () =>
+      document.getElementById('loader').classList.add('done');
+  })
+  .catch(e => {
+    document.getElementById('loader').innerHTML =
+      '<p style="color:#ffaaaa;padding:16px">로드 실패: ' + e.message + '</p>';
+  });
+</script>
+</body>
+</html>

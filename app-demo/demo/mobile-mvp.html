@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>모바일 MVP 데모 — 철의장품</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:#0A1628}
+iframe{width:100%;height:100%;border:none;display:block}
+#loader{position:fixed;inset:0;background:#0A1628;display:flex;align-items:center;justify-content:center;color:#7A9BB8;font-family:sans-serif;font-size:14px;z-index:999}
+#loader.done{display:none}
+</style>
+</head>
+<body>
+<div id="loader">모바일 MVP 로딩 중...</div>
+<iframe id="frame"></iframe>
+<script>
+var _n = new Date();
+var TODAY = _n.getFullYear()+'-'+('0'+(_n.getMonth()+1)).slice(-2)+'-'+('0'+_n.getDate()).slice(-2);
+var _HIST = [
+  {rowId:'r1', date:TODAY, partner:'범진기업', car:'12가1673', depart:'08:30', arrival:'11:20', destination:'케이조선 진해조선소', pallet:5, materials:[], photos:[], deleted:false, registeredBy:'admin', registeredAt:TODAY+'T09:15:00'},
+  {rowId:'r2', date:TODAY, partner:'대우스틸', car:'34나5678', depart:'09:15', arrival:'', destination:'LG전자 청주공장', pallet:3, materials:[], photos:[], deleted:false, registeredBy:'admin', registeredAt:TODAY+'T10:30:00'},
+  {rowId:'r3', date:TODAY, partner:'포스코파트너스', car:'56다9012', depart:'07:00', arrival:'10:45', destination:'삼성전자 수원공장', pallet:8, materials:[], photos:[], deleted:false, registeredBy:'admin', registeredAt:TODAY+'T08:00:00'},
+  {rowId:'r4', date:'2026-07-19', partner:'한국철강', car:'78라3456', depart:'08:00', arrival:'', destination:'현대자동차 아산공장', pallet:4, materials:[], photos:[], deleted:false, registeredBy:'admin', registeredAt:'2026-07-19T08:45:00'}
+];
+var _ZONES = [
+  {zoneId:'B1-1', companyName:'범진기업', zoneName:'B1-1', rackCapacity:10, boxLayout:{xPct:30,yPct:24,wPct:26,hPct:16}},
+  {zoneId:'B1-2', companyName:'대우스틸', zoneName:'B1-2', rackCapacity:12, boxLayout:{xPct:70,yPct:24,wPct:26,hPct:16}},
+  {zoneId:'B1-3', companyName:'한국철강', zoneName:'B1-3', rackCapacity:8, boxLayout:{xPct:30,yPct:58,wPct:26,hPct:16}},
+  {zoneId:'B1-4', companyName:'포스코파트너스', zoneName:'B1-4', rackCapacity:8, boxLayout:{xPct:70,yPct:58,wPct:26,hPct:16}},
+  {zoneId:'B1-5', companyName:'범진기업', zoneName:'B1-5', rackCapacity:6, boxLayout:{xPct:50,yPct:86,wPct:28,hPct:14}}
+];
+var _ITEMS = [
+  {palletId:'P1',zoneId:'B1-1',status:'적치중'},{palletId:'P2',zoneId:'B1-1',status:'적치중'},
+  {palletId:'P3',zoneId:'B1-3',status:'적치중'},{palletId:'P4',zoneId:'B1-4',status:'적치중'},{palletId:'P5',zoneId:'B1-4',status:'적치중'}
+];
+var MOCKS = {
+  login:               {success:true, token:'MOCK_TOKEN', userId:'admin', role:'Admin', partnerName:'범진기업', ocrPerm:true, zonePerm:true},
+  verifyToken:         {success:false},
+  getHistory:          {success:true, data:_HIST},
+  getPartners:         {success:true, data:[{name:'범진기업'},{name:'대우스틸'},{name:'한국철강'},{name:'포스코파트너스'}]},
+  getDeliveryPartners: {success:true, data:{'케이조선 진해조선소':{},'현대자동차 아산공장':{},'LG전자 청주공장':{},'삼성전자 수원공장':{}}},
+  getStorageData:      {success:true, data:{zones:_ZONES, items:_ITEMS, yards:[], mapImageUrl:''}},
+  addHistory:          {success:true, rowId:'new'}
+};
+
+var MOCK2 = '<' + 'script>'
+  + 'localStorage.setItem("gas_url","https://demo.mock.local/exec");'
+  + 'localStorage.setItem("gas_token","demo");'
+  + '(function(){var o=window.fetch.bind(window);var M=' + JSON.stringify(MOCKS) + ';'
+  + 'window.fetch=function(u,opt){var s=typeof u==="string"?u:u.toString();'
+  + 'if(s.indexOf("demo.mock.local")<0)return o(u,opt);'
+  + 'var a="";if(s.indexOf("?")>=0){a=new URLSearchParams(s.split("?")[1]).get("action")||"";}'
+  + 'if(!a&&opt&&opt.body){try{a=JSON.parse(opt.body).action||"";}catch(e){}}'
+  + 'var r=M[a]||{success:true,data:[]};'
+  + 'return Promise.resolve(new Response(JSON.stringify(r),{status:200,headers:{"Content-Type":"application/json"}}));};})();'
+  + '<' + '/script>';
+
+fetch('../GAS/mobile.html', {cache:'no-store'})
+  .then(function(r){ return r.text(); })
+  .then(function(html){
+    var idx = html.indexOf('<script');
+    var patched = html.slice(0, idx) + MOCK2 + html.slice(idx);
+    var blob = new Blob([patched], {type:'text/html'});
+    document.getElementById('frame').src = URL.createObjectURL(blob);
+    document.getElementById('frame').onload = function(){ document.getElementById('loader').classList.add('done'); };
+  })
+  .catch(function(e){ document.getElementById('loader').innerHTML = '로드 실패: ' + e.message; });
+</script>
+</body>
+</html>

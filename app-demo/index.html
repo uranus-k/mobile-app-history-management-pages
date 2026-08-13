@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>철의장품 납품이력 관리 시스템 — 데모</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Malgun Gothic','Noto Sans KR',sans-serif;background:#0A1628;color:#e6eefb;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .wrap{width:100%;max-width:560px}
+  h1{font-size:22px;font-weight:700;margin-bottom:4px}
+  .sub{font-size:13px;color:#7A9BB8;margin-bottom:24px}
+  .card{display:block;background:#12233d;border:1px solid #21385a;border-radius:14px;padding:18px 20px;margin-bottom:14px;text-decoration:none;color:inherit;transition:border-color .15s,transform .15s}
+  .card:hover{border-color:#3b82f6;transform:translateY(-1px)}
+  .card h2{font-size:16px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+  .card p{font-size:12px;color:#9fb6d4;line-height:1.5}
+  .badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:#1d3a5f;color:#7fb0ff}
+  .note{font-size:11px;color:#5f7ea0;margin-top:18px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>철의장품 납품이력 관리 시스템</h1>
+  <p class="sub">디지털 전시회 데모 · Structure Outfitting Delivery Management</p>
+
+  <a class="card" href="demo/pc.html">
+    <h2>PC 대시보드 <span class="badge">DEMO</span></h2>
+    <p>불출·적치·운송 통합 관리. 현장 적치장 운영을 2D/3D로 시각화하며 Yard Map Studio 2.5D 모델을 불러옵니다.</p>
+  </a>
+
+  <a class="card" href="demo/mobile-mvp.html">
+    <h2>현장 모바일 (기사용) <span class="badge">DEMO</span></h2>
+    <p>QR 스캔으로 출발 자동 기록, GPS 200m 자동 도착 처리. 적치·불출 현황을 현장에서 확인.</p>
+  </a>
+
+  <a class="card" href="https://yard-map-studio-demo.sechanyi.chatgpt.site/">
+    <h2>Yard Map Studio 2.5D <span class="badge">연계</span></h2>
+    <p>위성사진을 3D 적치장 모델(구역·건물·시설물)로 만드는 별도 저작 도구. 결과 패키지를 위 PC 대시보드가 불러옵니다.</p>
+  </a>
+
+  <p class="note">모든 데이터는 데모용 mock입니다 — 실서비스 데이터·엔드포인트와 무관합니다.</p>
+</div>
+</body>
+</html>
