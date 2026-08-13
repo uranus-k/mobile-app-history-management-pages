@@ -69,6 +69,14 @@ const _MOCKS_OBJ = {
     ocrPerm: true,
     zonePerm: true
   },
+  getYardModelMetadata: {success:true, data:{
+    packageKey: 'yard-sample-01@1.0.0',
+    projectId: 'yard-sample-01',
+    modelVersion: '1.0.0',
+    schemaVersion: '1.1.0',
+    size: 637462,
+    sha256: '881daa0b64a0b10ccb0d2bb94f8d65afdeafca48e6bf4b1f8eff2889e34ea4ca'
+  }},
   loadZoneVertices:    {success:true, data:{
     zones: [
       { zoneId:'Z001', supplierName:'(주)한국철강', zoneName:'A야드 1구역', color:'#3B82F6',
@@ -146,18 +154,38 @@ const _MOCKS_OBJ = {
   setActiveAIModel:    {success:true, model:'meta-llama/llama-3.2-3b-instruct:free'}
 };
 
+const _YARD_MODEL_URL = new URL('../assets/yard-model-package.zip', window.location.href).href;
 const _MOCK2 = `<script>
   localStorage.setItem('gas_url',   'https://demo.mock.local/exec');
   localStorage.setItem('gas_token', 'demo_token_2024');
+  window.addEventListener('DOMContentLoaded', () => {
+    const userId = document.getElementById('login-userid');
+    const password = document.getElementById('login-password');
+    if (userId) userId.value = 'guest';
+    if (password) password.value = 'guest2026';
+  });
   (function(){
     const _orig = window.fetch.bind(window);
     const MOCKS = ${JSON.stringify(_MOCKS_OBJ)};
+    const YARD_MODEL_URL = ${JSON.stringify(_YARD_MODEL_URL)};
     window.fetch = async function(url, opts){
       const s = typeof url === 'string' ? url : url.toString();
       if (!s.includes('demo.mock.local')) return _orig(url, opts);
       let action = '';
       if (s.includes('?')) { action = new URLSearchParams(s.split('?')[1]).get('action') || ''; }
       if (!action && opts && opts.body) { try { action = JSON.parse(opts.body).action || ''; } catch(e){} }
+      if (action === 'getYardModelPackage') {
+        const asset = await _orig(YARD_MODEL_URL, {cache:'no-store'});
+        if (!asset.ok) return new Response(JSON.stringify({success:false, error:'Yard Model ZIP 로드 실패'}),
+          {status:asset.status, headers:{'Content-Type':'application/json'}});
+        const bytes = new Uint8Array(await asset.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 32768) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+        }
+        const r = {success:true, data:{metadata:MOCKS.getYardModelMetadata.data, packageBase64:btoa(binary)}};
+        return new Response(JSON.stringify(r), {status:200, headers:{'Content-Type':'application/json'}});
+      }
       const r = MOCKS[action] || {success:true, data:[]};
       return new Response(JSON.stringify({...r, rowId: Date.now()}),
         {status:200, headers:{'Content-Type':'application/json'}});
